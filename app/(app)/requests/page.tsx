@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
 
 type RequestStatus =
   | "pending"
@@ -100,43 +101,62 @@ const mockRequests: RequestItem[] = [
   },
 ];
 
-const statusConfig = {
+const statusConfig: Record<
+  RequestStatus,
+  {
+    icon: typeof Clock;
+    label: string;
+    className: string;
+  }
+> = {
   pending: {
     icon: Clock,
     label: "Pending",
-    className: "bg-muted text-muted-foreground border-muted",
+    className: "bg-muted text-muted-foreground border-border",
   },
   processing: {
     icon: AlertCircle,
     label: "Processing",
-    className: "bg-yellow-100 text-yellow-800 border-yellow-300",
+    className:
+      "bg-amber-50/80 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-100 dark:border-amber-800",
   },
   ready: {
     icon: CheckCircle,
     label: "Ready",
-    className: "bg-accent/20 text-accent border-accent/30",
+    className:
+      "bg-accent/20 text-accent border-accent/40 dark:bg-accent/25 dark:text-accent-foreground dark:border-accent/60",
   },
   completed: {
     icon: CheckCircle,
     label: "Completed",
-    className: "bg-primary/20 text-primary border-primary/30",
+    className:
+      "bg-primary/15 text-primary border-primary/40 dark:bg-primary/20 dark:text-primary-foreground dark:border-primary/60",
   },
   rejected: {
     icon: XCircle,
     label: "Rejected",
-    className: "bg-destructive/10 text-destructive border-destructive/30",
+    className:
+      "bg-destructive/10 text-destructive border-destructive/40 dark:bg-destructive/20 dark:text-destructive-foreground dark:border-destructive/60",
   },
 };
 
 export default function RequestsPage() {
   const router = useRouter();
-  const [userRole, setUserRole] = useState<
-    "public" | "registered" | "verified" | "admin"
-  >("registered");
+  const { user, status } = useAuth();
+  const userRole = user.role as "public" | "registered" | "verified" | "admin";
+
   const [activeFilter, setActiveFilter] = useState<"all" | RequestStatus>(
-    "all"
+    "all",
   );
   const [searchQuery, setSearchQuery] = useState("");
+
+  if (status === "loading") {
+    return (
+      <div className="p-6 max-w-[90%] mx-auto text-sm text-muted-foreground">
+        Loading requests…
+      </div>
+    );
+  }
 
   const filteredRequests = mockRequests.filter((req) => {
     const matchesFilter = activeFilter === "all" || req.status === activeFilter;
@@ -177,71 +197,59 @@ export default function RequestsPage() {
     alert(`Delete request ${id}`);
   };
 
-  // Calculate role-specific stats
-  const roleStats = {
-    pending: mockRequests.filter(
-      (r) => r.status === "pending" && userRole !== "public"
-    ).length,
-    processing: mockRequests.filter(
-      (r) => r.status === "processing" && userRole !== "public"
-    ).length,
-    ready: mockRequests.filter(
-      (r) => r.status === "ready" && userRole !== "public"
-    ).length,
-    completed: mockRequests.filter(
-      (r) => r.status === "completed" && userRole !== "public"
-    ).length,
-    rejected: mockRequests.filter(
-      (r) => r.status === "rejected" && userRole !== "public"
-    ).length,
+  const handleSignIn = () => {
+    router.push("/login");
   };
+
+  const handleSignUp = () => {
+    router.push("/signup");
+  };
+
+  // Simple totals; in a real app you would scope to user for non-admin
+  const counts = {
+    pending: mockRequests.filter((r) => r.status === "pending").length,
+    processing: mockRequests.filter((r) => r.status === "processing").length,
+    ready: mockRequests.filter((r) => r.status === "ready").length,
+    completed: mockRequests.filter((r) => r.status === "completed").length,
+    rejected: mockRequests.filter((r) => r.status === "rejected").length,
+  };
+  const totalCount =
+    counts.pending +
+    counts.processing +
+    counts.ready +
+    counts.completed +
+    counts.rejected;
 
   return (
     <div className="p-6 max-w-[90%] mx-auto">
-      {/* Role Switcher (Dev Only) */}
-      <div className="mb-6 p-3 bg-muted rounded-lg text-sm">
-        <span className="font-medium">Dev Role Switcher:</span>
-        {(["public", "registered", "verified", "admin"] as const).map(
-          (role) => (
-            <button
-              key={role}
-              onClick={() => setUserRole(role)}
-              className={`ml-2 px-3 py-1 rounded ${
-                userRole === role
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-background hover:bg-muted"
-              }`}
-            >
-              {role}
-            </button>
-          )
-        )}
-      </div>
-
       {/* Public User View */}
       {userRole === "public" && (
         <div className="text-center py-24 px-6 bg-card border border-border rounded-xl">
           <UserPlus className="mx-auto h-16 w-16 text-muted-foreground mb-6" />
           <h2 className="text-2xl font-semibold text-foreground mb-3">
-            Sign In to Make Requests
+            Sign in to make requests
           </h2>
           <p className="text-lg text-muted-foreground mb-8 max-w-md mx-auto">
-            You need to be a registered user to request datasets and track your
-            requests.
+            You need a registered account to request datasets and track their
+            status.
           </p>
           <Button
             size="lg"
             className="bg-accent text-accent-foreground hover:bg-accent/90"
-            onClick={() => alert("Navigate to sign in")}
+            onClick={handleSignIn}
           >
             Sign In
             <ArrowRight size={18} className="ml-2" />
           </Button>
           <div className="mt-4 text-sm text-muted-foreground">
             Don&apos;t have an account?{" "}
-            <span className="text-accent cursor-pointer hover:underline">
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              onClick={handleSignUp}
+            >
               Register here
-            </span>
+            </button>
           </div>
         </div>
       )}
@@ -262,20 +270,15 @@ export default function RequestsPage() {
 
             <div className="text-sm text-muted-foreground">
               {userRole === "admin" && (
-                <span className="text-primary">Admin View • </span>
-              )}
-              {userRole === "admin" ? (
-                <span>Total Requests: {mockRequests.length}</span>
-              ) : (
-                <span>
-                  Your Requests:{" "}
-                  {roleStats.pending +
-                    roleStats.processing +
-                    roleStats.ready +
-                    roleStats.completed +
-                    roleStats.rejected}
+                <span className="text-primary font-medium mr-1">
+                  Admin view •
                 </span>
               )}
+              <span>
+                {userRole === "admin"
+                  ? `Total Requests: ${mockRequests.length}`
+                  : `Your Requests: ${totalCount}`}
+              </span>
             </div>
           </div>
 
@@ -296,60 +299,20 @@ export default function RequestsPage() {
           {/* Status Filter Tabs */}
           <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
             {[
-              {
-                value: "all",
-                label: "All",
-                count:
-                  userRole === "admin"
-                    ? mockRequests.length
-                    : roleStats.pending +
-                      roleStats.processing +
-                      roleStats.ready +
-                      roleStats.completed +
-                      roleStats.rejected,
-              },
-              {
-                value: "pending",
-                label: "Pending",
-                count:
-                  userRole === "admin"
-                    ? mockRequests.filter((r) => r.status === "pending").length
-                    : roleStats.pending,
-              },
+              { value: "all", label: "All", count: totalCount },
+              { value: "pending", label: "Pending", count: counts.pending },
               {
                 value: "processing",
                 label: "Processing",
-                count:
-                  userRole === "admin"
-                    ? mockRequests.filter((r) => r.status === "processing")
-                        .length
-                    : roleStats.processing,
+                count: counts.processing,
               },
-              {
-                value: "ready",
-                label: "Ready",
-                count:
-                  userRole === "admin"
-                    ? mockRequests.filter((r) => r.status === "ready").length
-                    : roleStats.ready,
-              },
+              { value: "ready", label: "Ready", count: counts.ready },
               {
                 value: "completed",
                 label: "Completed",
-                count:
-                  userRole === "admin"
-                    ? mockRequests.filter((r) => r.status === "completed")
-                        .length
-                    : roleStats.completed,
+                count: counts.completed,
               },
-              {
-                value: "rejected",
-                label: "Rejected",
-                count:
-                  userRole === "admin"
-                    ? mockRequests.filter((r) => r.status === "rejected").length
-                    : roleStats.rejected,
-              },
+              { value: "rejected", label: "Rejected", count: counts.rejected },
             ].map((tab) => (
               <button
                 key={tab.value}
@@ -367,18 +330,10 @@ export default function RequestsPage() {
 
           {/* Results Count */}
           <div className="mb-4 text-sm text-muted-foreground">
-            Showing {filteredRequests.length} of{" "}
-            {userRole === "admin"
-              ? mockRequests.length
-              : roleStats.pending +
-                roleStats.processing +
-                roleStats.ready +
-                roleStats.completed +
-                roleStats.rejected}{" "}
-            requests
+            Showing {filteredRequests.length} of {totalCount} requests
           </div>
 
-          {/* Empty State for No Requests */}
+          {/* Empty State */}
           {filteredRequests.length === 0 && (
             <div className="text-center py-16 bg-card border border-border rounded-lg">
               <Inbox className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
@@ -388,14 +343,14 @@ export default function RequestsPage() {
               <p className="text-muted-foreground mb-6">
                 {searchQuery || activeFilter !== "all"
                   ? "Try adjusting your search or filters."
-                  : "You haven't made any requests yet."}
+                  : "You have not made any requests yet."}
               </p>
               {!searchQuery && activeFilter === "all" && (
                 <Button
                   className="bg-accent text-accent-foreground hover:bg-accent/90"
                   onClick={handleNewRequest}
                 >
-                  Browse Catalog to Request Data
+                  Browse catalog to request data
                 </Button>
               )}
             </div>
@@ -419,7 +374,7 @@ export default function RequestsPage() {
                           </h3>
                           {getStatusBadge(request.status)}
                           {request.type === "custom" && (
-                            <span className="px-2 py-1 text-xs bg-accent/20 text-accent border border-accent/30 rounded-md font-medium">
+                            <span className="px-2 py-1 text-xs bg-accent/20 text-accent border border-accent/40 rounded-md font-medium">
                               Custom
                             </span>
                           )}
@@ -457,9 +412,8 @@ export default function RequestsPage() {
                     )}
                   </div>
 
-                  {/* Right: Actions - ✅ Only 3 buttons as specified */}
-                  <div className="flex flex-col gap-3 py-7 px-10 lg:w-64">
-                    {/* ✅ Pending: Delete button */}
+                  {/* Right: Actions */}
+                  <div className="flex flex-col gap-3 py-4 lg:py-6 px-0 lg:px-10 lg:w-64">
                     {request.status === "pending" && (
                       <Button
                         size="sm"
@@ -472,7 +426,6 @@ export default function RequestsPage() {
                       </Button>
                     )}
 
-                    {/* ✅ Ready: Download button */}
                     {request.status === "ready" && (
                       <Button
                         size="sm"
@@ -484,7 +437,6 @@ export default function RequestsPage() {
                       </Button>
                     )}
 
-                    {/* ✅ Rejected: Resubmit button */}
                     {request.status === "rejected" && (
                       <Button
                         size="sm"
@@ -497,7 +449,6 @@ export default function RequestsPage() {
                       </Button>
                     )}
 
-                    {/* ✅ Processing/Completed: No button */}
                     {(request.status === "processing" ||
                       request.status === "completed") && (
                       <div className="h-10 flex items-center justify-center text-sm text-muted-foreground">

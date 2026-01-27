@@ -4,11 +4,43 @@
 // Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
+// prisma/schema.prisma
+
 generator client {
-  provider = "prisma-client"
-  output   = "../lib/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  organization  String?
+  country       String?
+  phone         String?
+  image         String?   // URL to profile photo (e.g., Azure Blob)
+  passwordHash  String
+  role          Role      @default(REGISTERED)
+  emailVerified DateTime? // ← nullable = not verified
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model VerificationToken {
+  id        String   @id @default(cuid())
+  email     String
+  token     String   @unique
+  expires   DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
+
+enum Role {
+  REGISTERED
+  VERIFIED
+  ADMIN
 }

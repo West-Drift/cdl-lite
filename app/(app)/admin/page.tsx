@@ -3,42 +3,13 @@
 
 import { useState } from "react";
 import {
-  Bell,
   CheckCircle,
   XCircle,
   Download,
-  FileText,
-  MessageSquare,
   Clock,
-  User,
-  Shield,
-  Trash,
-  Check,
   Inbox,
   Search,
-  Filter,
-  AlertTriangle,
-  Activity,
-  Database,
   Users,
-  BarChart3,
-  Upload,
-  Eye,
-  Mail,
-  ShieldCheck,
-  UserCheck,
-  UserX,
-  Settings,
-  TrendingUp,
-  Calendar,
-  MapPin,
-  Layers,
-  FileSpreadsheet,
-  AlertCircle,
-  Info,
-  CheckCircle2,
-  X,
-  Plus,
   MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -65,15 +36,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
+  DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-type AdminRole = "admin" | "moderator" | "staff";
 type RequestStatus = "pending" | "approved" | "rejected" | "processed";
 type UserRole = "public" | "registered" | "verified" | "admin";
 
@@ -106,7 +75,7 @@ interface AdminUser {
   requestCount: number;
 }
 
-// ✅ Mock data - same structure as your existing data
+// Mock Requests
 const mockRequests: AdminRequest[] = [
   {
     id: "REQ-2025-001",
@@ -176,6 +145,7 @@ const mockRequests: AdminRequest[] = [
   },
 ];
 
+// Mock Users
 const mockUsers: AdminUser[] = [
   {
     id: "USR-2025-001",
@@ -219,51 +189,55 @@ const mockUsers: AdminUser[] = [
   },
 ];
 
+// Dark-theme-aware status config
 const statusConfig = {
   pending: {
     icon: Clock,
     label: "Pending",
-    className: "bg-yellow-100 text-yellow-800 border-yellow-300",
+    className:
+      "border border-yellow-500/40 bg-yellow-500/10 text-yellow-700 dark:bg-yellow-500/15 dark:text-yellow-200",
   },
   approved: {
     icon: CheckCircle,
     label: "Approved",
-    className: "bg-green-100 text-green-800 border-green-300",
+    className:
+      "border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200",
   },
   rejected: {
     icon: XCircle,
     label: "Rejected",
-    className: "bg-red-100 text-red-800 border-red-300",
+    className:
+      "border border-red-500/40 bg-red-500/10 text-red-700 dark:bg-red-500/15 dark:text-red-200",
   },
   processed: {
     icon: CheckCircle,
     label: "Processed",
-    className: "bg-blue-100 text-blue-800 border-blue-300",
+    className:
+      "border border-sky-500/40 bg-sky-500/10 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200",
   },
 };
 
 export default function AdminPanelPage() {
-  const [userRole, setUserRole] = useState<AdminRole>("admin");
   const [activeTab, setActiveTab] = useState<"requests" | "users">("requests");
   const [requestFilter, setRequestFilter] = useState<RequestStatus | "all">(
-    "all"
+    "all",
   );
   const [userFilter, setUserFilter] = useState<UserRole | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // ✅ Stats calculations
+  // Stats
   const totalPending = mockRequests.filter(
-    (r) => r.status === "pending"
+    (r) => r.status === "pending",
   ).length;
   const totalApproved = mockRequests.filter(
-    (r) => r.status === "approved"
+    (r) => r.status === "approved",
   ).length;
   const totalProcessed = mockRequests.filter(
-    (r) => r.status === "processed"
+    (r) => r.status === "processed",
   ).length;
   const totalUsers = mockUsers.length;
 
-  // ✅ Filter requests
+  // Filter requests
   const filteredRequests = mockRequests.filter((req) => {
     const matchesStatus =
       requestFilter === "all" || req.status === requestFilter;
@@ -275,7 +249,7 @@ export default function AdminPanelPage() {
     return matchesStatus && matchesSearch;
   });
 
-  // ✅ Filter users
+  // Filter users
   const filteredUsers = mockUsers.filter((user) => {
     const matchesRole = userFilter === "all" || user.role === userFilter;
     const matchesSearch =
@@ -340,26 +314,6 @@ export default function AdminPanelPage() {
 
   return (
     <div className="p-6 max-w-[90%] mx-auto">
-      {/* Role Switcher (Dev Only) */}
-      <div className="mb-6 p-3 bg-muted rounded-lg text-sm">
-        <span className="font-medium">Dev Role Switcher:</span>
-        {(["public", "registered", "verified", "admin"] as const).map(
-          (role) => (
-            <button
-              key={role}
-              onClick={() => setUserRole(role)}
-              className={`ml-2 px-3 py-1 rounded ${
-                userRole === role
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-background hover:bg-muted"
-              }`}
-            >
-              {role}
-            </button>
-          )
-        )}
-      </div>
-
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 mb-8">
         <Card className="bg-card border border-border rounded-lg shadow-sm hover:shadow-md hover:border-accent/40 transition-all duration-200">
@@ -371,7 +325,7 @@ export default function AdminPanelPage() {
           <CardContent>
             <div className="flex items-center justify-between">
               <p className="text-2xl font-bold text-foreground">
-                {totalApproved}
+                {totalPending}
               </p>
               <div className="bg-accent p-2 rounded-sm">
                 <Clock className="h-5 w-5 text-gray-50" />
@@ -599,7 +553,7 @@ export default function AdminPanelPage() {
 
           {/* Users Tab */}
           {activeTab === "users" && (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto bg-card border border-border rounded-lg p-6 hover:shadow-md hover:border-accent/40 transition-all duration-200">
               <Table>
                 <TableHeader>
                   <TableRow>

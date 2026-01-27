@@ -1,7 +1,7 @@
 // app/(app)/dashboard/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import {
   BarChart,
   Bar,
@@ -31,6 +31,7 @@ import {
   TrendingUp,
   User,
 } from "lucide-react";
+import { useAuth } from "@/components/AuthProvider";
 
 // Mock data (replace with API calls later)
 const quickStats = [
@@ -123,36 +124,23 @@ const adminMetrics = {
 };
 
 export default function DashboardPage() {
-  const [userRole, setUserRole] = useState<
-    "public" | "registered" | "verified" | "admin"
-  >("registered");
+  const { user, status } = useAuth();
+  const userRole = user.role; // "public" | "registered" | "verified" | "admin"
 
   useEffect(() => {
-    // In prod: const { role } = useAuth(); setUserRole(role);
-  }, []);
+    // placeholder if you want side-effects when role changes later
+  }, [userRole]);
+
+  if (status === "loading") {
+    return (
+      <div className="p-6 max-w-[90%] mx-auto text-sm text-muted-foreground">
+        Loading your dashboard…
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-[90%] mx-auto">
-      {/* Role Switcher (Dev Only) */}
-      <div className="mb-6 p-3 bg-muted rounded-lg text-sm">
-        <span className="font-medium">Dev Role Switcher:</span>
-        {(["public", "registered", "verified", "admin"] as const).map(
-          (role) => (
-            <button
-              key={role}
-              onClick={() => setUserRole(role)}
-              className={`ml-2 px-3 py-1 rounded ${
-                userRole === role
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-background hover:bg-muted"
-              }`}
-            >
-              {role}
-            </button>
-          )
-        )}
-      </div>
-
       {/* Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
         {quickStats.map((stat, i) => (
@@ -185,7 +173,7 @@ export default function DashboardPage() {
                   width={100}
                 />
                 <Tooltip
-                  content={({ payload, label }) => {
+                  content={({ payload }) => {
                     if (!payload || !payload.length) return null;
                     return (
                       <div
@@ -199,7 +187,7 @@ export default function DashboardPage() {
                           fontSize: "12px",
                         }}
                       >
-                        <p className="text-sm">{payload[0]?.value} datasets</p>{" "}
+                        <p className="text-sm">{payload[0]?.value} datasets</p>
                       </div>
                     );
                   }}
@@ -223,7 +211,7 @@ export default function DashboardPage() {
 
         {/* Download Trends */}
         <ChartContainer title="Download Trends (Last 30 Days)">
-          <div className="h-64">
+          <div className="h-64 bg-card border border-border rounded-lg hover:shadow-md hover:border-accent/40 transition-all duration-200">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={downloadTrendData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -249,12 +237,12 @@ export default function DashboardPage() {
                           fontSize: "12px",
                         }}
                       >
-                        <p className="text-sm">{label}</p> {/* ✅ Date */}
+                        <p className="text-sm">{label}</p>
                         <p
                           className="text-sm"
                           style={{ color: "var(--accent)" }}
                         >
-                          {payload[0]?.value} downloads{" "}
+                          {payload[0]?.value} downloads
                         </p>
                       </div>
                     );
@@ -306,10 +294,10 @@ export default function DashboardPage() {
         </button>
       </ChartContainer>
 
-      {/* Role-Specific Section */}
+      {/* Role-Specific Section: Registered & Verified */}
       <RoleSection roles={["registered", "verified"]} userRole={userRole}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          <div className="bg-card border border-border rounded-lg p-4 hover:shadow-md hover:border-accent/40 transition-all duration-200">
+          <div className="bg-card border border-border rounded-lg p-4 shadow-md hover:shadow-md hover:border-accent/40 transition-all duration-200">
             <h3 className="font-medium text-lg mb-3 flex items-center gap-2">
               <Eye className="text-primary h-5 w-5" />
               Your Recent Views
@@ -326,7 +314,7 @@ export default function DashboardPage() {
             </ul>
           </div>
 
-          <div className="bg-card border border-border rounded-lg p-4 hover:shadow-md hover:border-accent/40 transition-all duration-200">
+          <div className="bg-card border border-border rounded-lg p-4 shadow-md hover:shadow-md hover:border-accent/40 transition-all duration-200">
             <h3 className="font-medium text-lg mb-3 flex items-center gap-2">
               <FileText className="text-accent h-5 w-5" />
               Request Status Summary
@@ -355,9 +343,10 @@ export default function DashboardPage() {
         </div>
       </RoleSection>
 
+      {/* Role-Specific Section: Admin */}
       <RoleSection roles={["admin"]} userRole={userRole}>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-card border border-border rounded-lg p-4 hover:shadow-md hover:border-accent/40 transition-all duration-200">
+          <div className="bg-card border border-border rounded-lg p-4 shadow-md hover:shadow-md hover:border-accent/40 transition-all duration-200">
             <h3 className="font-medium text-lg mb-3 flex items-center gap-2 text-destructive">
               <List className="h-5 w-5" />
               Pending Requests
@@ -368,7 +357,7 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          <div className="bg-card border border-border rounded-lg p-4 hover:shadow-md hover:border-accent/40 transition-all duration-200">
+          <div className="bg-card border border-border rounded-lg p-4 shadow-md hover:shadow-md hover:border-accent/40 transition-all duration-200">
             <h3 className="font-medium text-lg mb-3 flex items-center gap-2 text-accent">
               <TrendingUp className="h-5 w-5" />
               User Growth
@@ -379,7 +368,7 @@ export default function DashboardPage() {
             <p className="text-sm text-muted-foreground mt-1">this week</p>
           </div>
 
-          <div className="bg-card border border-border rounded-lg p-4 hover:shadow-md hover:border-accent/40 transition-all duration-200">
+          <div className="bg-card border border-border rounded-lg p-4 shadow-md hover:shadow-md hover:border-accent/40 transition-all duration-200">
             <h3 className="font-medium text-lg mb-3 flex items-center gap-2 text-primary">
               <User className="h-5 w-5" />
               New User Info

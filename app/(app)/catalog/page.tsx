@@ -24,8 +24,8 @@ import {
 } from "@/components/ui/select";
 import { DatasetDownloadModal } from "@/components/ui/dataset-download-modal";
 import { DatasetUpdateModal } from "@/components/ui/dataset-update-modal";
+import { useAuth } from "@/components/AuthProvider";
 
-// Define proper TypeScript types
 interface Dataset {
   id: string;
   title: string;
@@ -40,7 +40,6 @@ interface Dataset {
   timeline: string;
 }
 
-// Enhanced mock data
 const mockDatasets: Dataset[] = [
   {
     id: "DS-001",
@@ -129,21 +128,30 @@ const mockDatasets: Dataset[] = [
 ];
 
 export default function DataCatalogPage() {
-  const [userRole, setUserRole] = useState<
-    "public" | "registered" | "verified" | "admin"
-  >("registered");
+  const { user, status } = useAuth();
+  const userRole = user.role; // "public" | "registered" | "verified" | "admin"
+
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("All Categories");
-  const [selectedFormat, setSelectedFormat] = useState("All Formats");
+  const [selectedCategory, setSelectedCategory] =
+    useState<string>("All Categories");
+  const [selectedFormat, setSelectedFormat] = useState<string>("All Formats");
   const [sortOrder, setSortOrder] = useState<
-    "newest" | "popular" | "alphabetical"
+    "newest" | "popular" | "alphabetical" | "bookmarked"
   >("newest");
+  const [bookmarkedOnly, setBookmarkedOnly] = useState(false);
 
-  // modal states types
   const [downloadModalOpen, setDownloadModalOpen] = useState(false);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null);
+
+  if (status === "loading") {
+    return (
+      <div className="p-6 max-w-[90%] mx-auto text-sm text-muted-foreground">
+        Loading catalog…
+      </div>
+    );
+  }
 
   // Filter datasets
   const filteredDatasets = mockDatasets.filter((dataset) => {
@@ -155,11 +163,14 @@ export default function DataCatalogPage() {
     const matchesCategory =
       selectedCategory === "All Categories" ||
       dataset.category === selectedCategory;
+
     const matchesFormat =
       selectedFormat === "All Formats" ||
       dataset.formats.some((f) => f === selectedFormat);
 
-    return matchesSearch && matchesCategory && matchesFormat;
+    const matchesBookmark = !bookmarkedOnly || dataset.isBookmarked;
+
+    return matchesSearch && matchesCategory && matchesFormat && matchesBookmark;
   });
 
   // Sort datasets
@@ -170,20 +181,32 @@ export default function DataCatalogPage() {
       );
     } else if (sortOrder === "popular") {
       return (
-        parseInt(b.records.replace(",", "")) -
-        parseInt(a.records.replace(",", ""))
+        parseInt(b.records.replace(/,/g, "")) -
+        parseInt(a.records.replace(/,/g, ""))
       );
     } else if (sortOrder === "alphabetical") {
       return a.title.localeCompare(b.title);
+    } else if (sortOrder === "bookmarked") {
+      const aScore = a.isBookmarked ? 1 : 0;
+      const bScore = b.isBookmarked ? 1 : 0;
+      if (bScore !== aScore) return bScore - aScore;
+      return (
+        new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime()
+      );
     }
     return 0;
   });
 
   const handleBookmarkToggle = (id: string) => {
+    if (userRole === "public") return;
     alert(`Dataset ${id} bookmarked`);
   };
 
   const handleRequestClick = (id: string) => {
+    if (userRole === "public") {
+      alert("Sign in or create an account to request access.");
+      return;
+    }
     alert(`Request submitted for dataset ${id}`);
   };
 
@@ -202,32 +225,11 @@ export default function DataCatalogPage() {
   };
 
   const handleUpdate = (updatedDataset: Dataset) => {
-    // In prod: update state + API
     alert(`Dataset ${updatedDataset.id} updated successfully`);
   };
 
   return (
     <div className="p-6 max-w-[90%] mx-auto">
-      {/* Role Switcher (Dev Only) */}
-      <div className="mb-6 p-3 bg-muted rounded-lg text-sm">
-        <span className="font-medium">Dev Role Switcher:</span>
-        {(["public", "registered", "verified", "admin"] as const).map(
-          (role) => (
-            <button
-              key={role}
-              onClick={() => setUserRole(role)}
-              className={`ml-2 px-3 py-1 rounded ${
-                userRole === role
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-background hover:bg-muted"
-              }`}
-            >
-              {role}
-            </button>
-          )
-        )}
-      </div>
-
       {/* Header Controls */}
       <div className="flex flex-col gap-6 mb-6">
         {/* Search & Filters */}
@@ -243,7 +245,10 @@ export default function DataCatalogPage() {
             />
           </div>
 
-          <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+          <Select
+            value={selectedCategory}
+            onValueChange={(val) => setSelectedCategory(val)}
+          >
             <SelectTrigger className="w-[180px] bg-input-background border-border">
               <SelectValue placeholder="All Categories" />
             </SelectTrigger>
@@ -254,12 +259,15 @@ export default function DataCatalogPage() {
                   <SelectItem key={category} value={category}>
                     {category}
                   </SelectItem>
-                )
+                ),
               )}
             </SelectContent>
           </Select>
 
-          <Select value={selectedFormat} onValueChange={setSelectedFormat}>
+          <Select
+            value={selectedFormat}
+            onValueChange={(val) => setSelectedFormat(val)}
+          >
             <SelectTrigger className="w-[180px] bg-input-background border-border">
               <SelectValue placeholder="All Formats" />
             </SelectTrigger>
@@ -270,34 +278,55 @@ export default function DataCatalogPage() {
                   <SelectItem key={format} value={format}>
                     {format}
                   </SelectItem>
-                )
+                ),
               )}
             </SelectContent>
           </Select>
 
           <Select
             value={sortOrder}
-            onValueChange={(value) => setSortOrder(value as any)}
+            onValueChange={(value) =>
+              setSortOrder(
+                value as "newest" | "popular" | "alphabetical" | "bookmarked",
+              )
+            }
           >
-            <SelectTrigger className="w-[180px] bg-input-background border-border">
+            <SelectTrigger className="w-[190px] bg-input-background border-border">
               <SelectValue placeholder="Sort By" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="newest">Recently Updated</SelectItem>
               <SelectItem value="popular">Most Popular</SelectItem>
               <SelectItem value="alphabetical">Alphabetical</SelectItem>
+              {userRole !== "public" && (
+                <SelectItem value="bookmarked">Bookmarked first</SelectItem>
+              )}
             </SelectContent>
           </Select>
         </div>
 
-        {/* Results & View Toggle */}
+        {/* Results & View + bookmarked chip */}
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
             Showing {sortedDatasets.length} of {mockDatasets.length} datasets
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {userRole !== "public" && (
+              <button
+                type="button"
+                onClick={() => setBookmarkedOnly((v) => !v)}
+                className={`text-xs px-3 py-2 rounded-sm border transition-colors ${
+                  bookmarkedOnly
+                    ? "bg-accent text-accent-foreground border-accent"
+                    : "bg-input-background text-muted-foreground border-border hover:text-foreground"
+                }`}
+              >
+                Bookmarked only
+              </button>
+            )}
+
             <span className="text-sm text-muted-foreground">View:</span>
-            <div className="flex bg-input-background rounded-lg p-1 border border-border">
+            <div className="flex bg-input-background rounded-sm border border-border">
               <button
                 onClick={() => setViewMode("grid")}
                 className={`p-2 rounded transition-colors ${
@@ -325,6 +354,30 @@ export default function DataCatalogPage() {
         </div>
       </div>
 
+      {/* Public user hint */}
+      {userRole === "public" && (
+        <div className="mb-4 rounded-lg border border-dashed border-border bg-card p-4 text-sm text-muted-foreground">
+          Request and download workflows are available for signed‑in users.
+          <span className="ml-1">
+            Please{" "}
+            <a
+              href="/login"
+              className="text-primary hover:underline font-medium"
+            >
+              sign in
+            </a>{" "}
+            or{" "}
+            <a
+              href="/signup"
+              className="text-primary hover:underline font-medium"
+            >
+              create an account
+            </a>{" "}
+            to unlock full access.
+          </span>
+        </div>
+      )}
+
       {/* Dataset Grid View */}
       {viewMode === "grid" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -337,16 +390,18 @@ export default function DataCatalogPage() {
                 <span className="inline-block px-3 py-1 text-xs font-semibold bg-accent text-accent-foreground rounded">
                   {dataset.category}
                 </span>
-                <button
-                  onClick={() => handleBookmarkToggle(dataset.id)}
-                  className={`p-2 rounded-lg transition-all duration-200 ${
-                    dataset.isBookmarked
-                      ? "text-accent bg-accent/10"
-                      : "text-muted-foreground hover:bg-accent/10 hover:text-accent"
-                  }`}
-                >
-                  <Bookmark size={16} />
-                </button>
+                {userRole !== "public" && (
+                  <button
+                    onClick={() => handleBookmarkToggle(dataset.id)}
+                    className={`p-2 rounded-lg transition-all duration-200 ${
+                      dataset.isBookmarked
+                        ? "text-accent bg-accent/10"
+                        : "text-muted-foreground hover:bg-accent/10 hover:text-accent"
+                    }`}
+                  >
+                    <Bookmark size={16} />
+                  </button>
+                )}
               </div>
 
               <h3 className="font-semibold text-lg mb-3 leading-tight text-foreground">
@@ -356,7 +411,6 @@ export default function DataCatalogPage() {
                 {dataset.description}
               </p>
 
-              {/* Dataset Metadata */}
               <div className="space-y-2 mb-5 text-sm">
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <MapPin size={14} />
@@ -389,7 +443,6 @@ export default function DataCatalogPage() {
                 ))}
               </div>
 
-              {/* Role-based Actions */}
               <div className="flex gap-3 mt-auto">
                 {userRole === "admin" ? (
                   <>
@@ -421,9 +474,13 @@ export default function DataCatalogPage() {
                     Request Access
                   </Button>
                 ) : (
-                  <Button size="sm" className="w-full" disabled>
+                  <Button
+                    size="sm"
+                    className="w-full cursor-not-allowed opacity-70"
+                    disabled
+                  >
                     <FileText size={14} className="mr-1.5" />
-                    Request Access
+                    Request Access (sign in)
                   </Button>
                 )}
               </div>
@@ -441,7 +498,6 @@ export default function DataCatalogPage() {
               className="bg-card border border-border rounded-lg p-5 hover:shadow-md hover:border-accent/40 transition-all duration-200"
             >
               <div className="flex flex-col lg:flex-row gap-5 lg:gap-6">
-                {/* Left: Main Info */}
                 <div className="flex-1">
                   <div className="flex items-start justify-between mb-3">
                     <div>
@@ -457,16 +513,18 @@ export default function DataCatalogPage() {
                         {dataset.title}
                       </h3>
                     </div>
-                    <button
-                      onClick={() => handleBookmarkToggle(dataset.id)}
-                      className={`p-2 rounded-lg transition-all duration-200 mt-1 ${
-                        dataset.isBookmarked
-                          ? "text-accent bg-accent/10"
-                          : "text-muted-foreground hover:bg-accent/10 hover:text-accent"
-                      }`}
-                    >
-                      <Bookmark size={16} />
-                    </button>
+                    {userRole !== "public" && (
+                      <button
+                        onClick={() => handleBookmarkToggle(dataset.id)}
+                        className={`p-2 rounded-lg transition-all duration-200 mt-1 ${
+                          dataset.isBookmarked
+                            ? "text-accent bg-accent/10"
+                            : "text-muted-foreground hover:bg-accent/10 hover:text-accent"
+                        }`}
+                      >
+                        <Bookmark size={16} />
+                      </button>
+                    )}
                   </div>
                   <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
                     {dataset.description}
@@ -491,7 +549,6 @@ export default function DataCatalogPage() {
                   </div>
                 </div>
 
-                {/* Right: Formats & Actions */}
                 <div className="flex flex-col gap-3 lg:w-64">
                   <div className="flex flex-wrap gap-2 justify-start lg:justify-end">
                     {dataset.formats.map((format) => (
@@ -503,7 +560,6 @@ export default function DataCatalogPage() {
                       </span>
                     ))}
                   </div>
-                  {/* Role-based Actions */}
                   <div className="flex gap-3">
                     {userRole === "admin" ? (
                       <>
@@ -535,9 +591,13 @@ export default function DataCatalogPage() {
                         Request Access
                       </Button>
                     ) : (
-                      <Button size="sm" className="w-full" disabled>
+                      <Button
+                        size="sm"
+                        className="w-full cursor-not-allowed opacity-70"
+                        disabled
+                      >
                         <FileText size={14} className="mr-1.5" />
-                        Request Access
+                        Request Access (sign in)
                       </Button>
                     )}
                   </div>

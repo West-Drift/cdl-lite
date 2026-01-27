@@ -4,11 +4,12 @@
 import { useState, useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { UserRole } from "@/types/user";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Download } from "lucide-react";
+
+type UserRole = "public" | "registered" | "verified" | "admin";
 
 interface MapCanvasProps {
   userRole: UserRole;
@@ -22,7 +23,6 @@ export function MapCanvas({ userRole }: MapCanvasProps) {
   const [availableDatasets, setAvailableDatasets] = useState<string[]>([]);
   const [selectedDatasets, setSelectedDatasets] = useState<string[]>([]);
 
-  // Mock data
   const mockBoundaries = [
     { id: "ke", name: "Kenya", type: "country" },
     { id: "ke-nairobi", name: "Nairobi County", type: "state" },
@@ -46,27 +46,23 @@ export function MapCanvas({ userRole }: MapCanvasProps) {
       preferCanvas: true,
     }).setView([-1.2921, 36.8219], 6);
 
-    // Add ESRI satellite base layer
     L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       {
         attribution:
           "© Acre Africa © RCMRD © Esri, Maxar, Earthstar Geographics, GIS User Community",
         maxZoom: 20,
-      }
+      },
     ).addTo(map);
 
-    // Handle polygon selection (mock for now)
-    map.on("click", (e) => {
-      // Mock: select a boundary based on click location
+    map.on("click", () => {
       const clickedBoundary =
         mockBoundaries[Math.floor(Math.random() * mockBoundaries.length)];
 
-      // Toggle boundary selection
       setSelectedBoundaries((prev) =>
         prev.includes(clickedBoundary.id)
           ? prev.filter((id) => id !== clickedBoundary.id)
-          : [...prev, clickedBoundary.id]
+          : [...prev, clickedBoundary.id],
       );
     });
 
@@ -80,22 +76,19 @@ export function MapCanvas({ userRole }: MapCanvasProps) {
     };
   }, []);
 
-  // Filter datasets based on selected boundaries
   useEffect(() => {
     if (selectedBoundaries.length === 0) {
       setAvailableDatasets([]);
       return;
     }
 
-    // Mock filtering logic: match dataset names with selected boundary names
     const filtered = mockDatasets.filter((dataset) =>
       selectedBoundaries.some((boundaryId) =>
-        dataset.toLowerCase().includes(boundaryId.toLowerCase())
-      )
+        dataset.toLowerCase().includes(boundaryId.toLowerCase()),
+      ),
     );
 
     setAvailableDatasets(filtered);
-    // Reset selected datasets when boundaries change
     setSelectedDatasets([]);
   }, [selectedBoundaries]);
 
@@ -103,7 +96,7 @@ export function MapCanvas({ userRole }: MapCanvasProps) {
     setSelectedDatasets((prev) =>
       prev.includes(dataset)
         ? prev.filter((d) => d !== dataset)
-        : [...prev, dataset]
+        : [...prev, dataset],
     );
   };
 
@@ -114,31 +107,29 @@ export function MapCanvas({ userRole }: MapCanvasProps) {
     }
 
     alert(`Request submitted for:\n${selectedDatasets.join("\n")}`);
-    // In prod: API call to submit request
   };
 
   return (
     <div className="space-y-6">
-      {/* Map Canvas - Full Height & Width */}
-      <div className="bg-gradient-to-br from-blue-50 to-gray-100 rounded-xl p-8 border-2 border-dashed border-gray-300 h-[calc(100vh-200px)] relative">
-        {/* Map Container */}
-        <div ref={mapRef} className="absolute inset-0"></div>
+      {/* Map Canvas */}
+      <div className="relative h-[calc(100vh-200px)] rounded-xl border-2 border-dashed border-border bg-gradient-to-br from-muted to-background overflow-hidden">
+        <div ref={mapRef} className="absolute inset-0" />
 
-        {/* Search Bar - Top Right */}
-        <div className="absolute top-8 right-8 z-1000 w-[300px]">
+        {/* Search Bar */}
+        <div className="absolute top-4 right-4 z-[1000] w-[280px]">
           <input
             type="text"
             placeholder="Search locations on map..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full px-4 py-2 border border-border rounded-3xl bg-input-background focus:outline-none focus:ring-2 focus:ring-primary placeholder:text-muted-foreground"
+            className="w-full px-4 py-2 border border-border rounded-3xl bg-input-background focus:outline-none focus:ring-2 focus:ring-primary placeholder:text-muted-foreground text-sm"
           />
         </div>
 
-        {/* Selected Boundaries Indicator */}
+        {/* Selected Boundaries */}
         {selectedBoundaries.length > 0 && (
-          <div className="absolute top-8 left-8 z-50 bg-white/90 backdrop-blur-sm rounded-lg p-3">
-            <div className="text-sm font-medium text-gray-700">
+          <div className="absolute top-4 left-4 z-[1000] bg-card/90 backdrop-blur-sm rounded-lg p-3 border border-border">
+            <div className="text-xs font-medium text-foreground">
               Selected Boundaries ({selectedBoundaries.length})
             </div>
             <div className="flex flex-wrap gap-1 mt-1">
@@ -158,29 +149,32 @@ export function MapCanvas({ userRole }: MapCanvasProps) {
         )}
       </div>
 
-      {/* Available Datasets - Below Map */}
+      {/* Available Datasets */}
       {availableDatasets.length > 0 && (
         <Card>
           <CardContent className="p-4">
-            <h3 className="font-medium text-lg mb-3">Available Datasets</h3>
+            <h3 className="font-medium text-lg mb-3 text-foreground">
+              Available Datasets
+            </h3>
             <div className="space-y-3">
               {availableDatasets.map((dataset) => (
                 <div
                   key={dataset}
-                  className={`flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50 ${
+                  className={`flex items-center justify-between p-3 border rounded-lg transition-colors ${
                     selectedDatasets.includes(dataset)
                       ? "border-accent bg-accent/10"
-                      : ""
+                      : "border-border hover:bg-muted"
                   }`}
                 >
                   <div className="flex items-center gap-3">
                     <Checkbox
                       checked={selectedDatasets.includes(dataset)}
                       onCheckedChange={() => handleDatasetSelect(dataset)}
+                      disabled={userRole === "public"}
                     />
                     <div>
-                      <p className="text-gray-900">{dataset}</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="text-sm text-foreground">{dataset}</p>
+                      <p className="text-xs text-muted-foreground">
                         Climate • Raster • Monthly
                       </p>
                     </div>
@@ -192,10 +186,8 @@ export function MapCanvas({ userRole }: MapCanvasProps) {
               ))}
             </div>
 
-            {/* Submit Button */}
             <div className="mt-4 flex justify-end">
               <Button
-                className="bg-[#05487f] hover:bg-[#044170]"
                 onClick={handleSubmitRequest}
                 disabled={
                   selectedDatasets.length === 0 || userRole === "public"
@@ -213,8 +205,8 @@ export function MapCanvas({ userRole }: MapCanvasProps) {
       {selectedBoundaries.length > 0 && availableDatasets.length === 0 && (
         <Card>
           <CardContent className="p-8 text-center">
-            <p className="text-gray-500">
-              No datasets available for the selected boundaries
+            <p className="text-sm text-muted-foreground">
+              No datasets available for the selected boundaries.
             </p>
           </CardContent>
         </Card>

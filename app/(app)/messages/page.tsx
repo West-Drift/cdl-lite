@@ -1,4 +1,3 @@
-// app/(app)/messages/page.tsx
 "use client";
 
 import { useState, useRef } from "react";
@@ -13,9 +12,7 @@ import {
   Paperclip,
   Inbox,
   Flag,
-  AlertCircle,
   Download,
-  CheckCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +25,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/components/AuthProvider";
 
 type UserRole = "public" | "registered" | "verified" | "admin";
 type MessageSender = "user" | "admin";
@@ -162,18 +160,31 @@ const mockMessages: Record<string, Message[]> = {
 };
 
 export default function MessagesPage() {
-  const [userRole, setUserRole] = useState<UserRole>("verified");
+  const { user, status } = useAuth();
+  const userRole = user.role as UserRole;
+
   const [selectedThread, setSelectedThread] = useState<string>(
-    mockThreads[0]?.requestId || ""
+    mockThreads[0]?.requestId || "",
   );
   const [newMessage, setNewMessage] = useState("");
   const [threads, setThreads] = useState(mockThreads);
   const [messages, setMessages] = useState(mockMessages);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [activeFilter, setActiveFilter] = useState<"all" | "active" | "urgent">(
+    "all",
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const currentThread = threads.find((t) => t.requestId === selectedThread);
-  const currentMessages = selectedThread ? messages[selectedThread] || [] : [];
+  if (status === "loading") {
+    return (
+      <div className="p-6 max-w-[90%] mx-auto text-sm text-muted-foreground">
+        Loading messages…
+      </div>
+    );
+  }
+
+  const isUrgentThread = (t: MessageThread) =>
+    t.participant.role === "verified" || t.participant.role === "admin";
 
   const sendMessage = () => {
     if (!newMessage.trim() && attachedFiles.length === 0) return;
@@ -192,13 +203,11 @@ export default function MessagesPage() {
       })),
     };
 
-    // Update messages
     setMessages((prev) => ({
       ...prev,
       [selectedThread]: [...(prev[selectedThread] || []), message],
     }));
 
-    // Update thread last message
     setThreads((prev) =>
       prev.map((t) =>
         t.requestId === selectedThread
@@ -212,11 +221,10 @@ export default function MessagesPage() {
               lastMessageTime: message.timestamp,
               unreadCount: 0,
             }
-          : t
-      )
+          : t,
+      ),
     );
 
-    // Clear inputs
     setNewMessage("");
     setAttachedFiles([]);
   };
@@ -224,7 +232,7 @@ export default function MessagesPage() {
   const handleFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files) {
-      const newFiles = Array.from(files).slice(0, 3); // Limit to 3 files
+      const newFiles = Array.from(files).slice(0, 3);
       setAttachedFiles((prev) => [...prev, ...newFiles]);
     }
   };
@@ -233,13 +241,12 @@ export default function MessagesPage() {
     setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const getInitials = (name: string) => {
-    return name
+  const getInitials = (name: string) =>
+    name
       .split(" ")
       .map((n) => n[0])
       .join("")
       .toUpperCase();
-  };
 
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -258,70 +265,69 @@ export default function MessagesPage() {
     }
   };
 
+  const filteredThreads = threads.filter((t) => {
+    if (userRole !== "admin") {
+      return true;
+    }
+
+    if (activeFilter === "all") return true;
+    if (activeFilter === "active") {
+      return t.unreadCount > 0;
+    }
+    if (activeFilter === "urgent") {
+      return isUrgentThread(t);
+    }
+    return true;
+  });
+
+  const allUrgentCount =
+    userRole === "admin" ? threads.filter((t) => isUrgentThread(t)).length : 0;
+  const allActiveCount =
+    userRole === "admin" ? threads.filter((t) => t.unreadCount > 0).length : 0;
+
+  const currentThread =
+    filteredThreads.find((t) => t.requestId === selectedThread) ||
+    filteredThreads[0];
+  const currentMessages = currentThread
+    ? messages[currentThread.requestId] || []
+    : [];
+
   return (
     <div className="p-6 max-w-[90%] mx-auto">
-      {/* Role Switcher (Dev Only) - Same as Requests */}
-      <div className="mb-6 p-3 bg-muted rounded-lg text-sm">
-        <span className="font-medium">Dev Role Switcher:</span>
-        {(["public", "registered", "verified", "admin"] as const).map(
-          (role) => (
-            <button
-              key={role}
-              onClick={() => setUserRole(role)}
-              className={`ml-2 px-3 py-1 rounded ${
-                userRole === role
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-background hover:bg-muted"
-              }`}
-            >
-              {role}
-            </button>
-          )
-        )}
-      </div>
-
-      {/* Public User View - Same as Requests */}
       {userRole === "public" && (
         <div className="text-center py-24 px-6 bg-card border border-border rounded-xl">
           <MessageSquare className="mx-auto h-16 w-16 text-muted-foreground mb-6" />
           <h2 className="text-2xl font-semibold text-foreground mb-3">
-            Sign In to Access Messages
+            Sign in to access messages
           </h2>
           <p className="text-lg text-muted-foreground mb-8 max-w-md mx-auto">
             Messaging is only available to registered users to discuss your data
             requests.
           </p>
-          <Button
-            size="lg"
-            className="bg-accent text-accent-foreground hover:bg-accent/90"
-          >
+          <Button className="bg-accent text-accent-foreground hover:bg-accent/90">
             Sign In
           </Button>
         </div>
       )}
 
-      {/* Logged-in User View - Same structure as Requests */}
       {userRole !== "public" && (
         <>
-          {/* Header - Same structure as Requests */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-            <div>
-              <p className="text-muted-foreground">
-                {userRole === "admin"
-                  ? "Communicate with data requesters"
-                  : "Discuss your data requests with administrators"}
-              </p>
-            </div>
+            <p className="text-muted-foreground">
+              {userRole === "admin"
+                ? "Communicate with data requesters"
+                : "Discuss your data requests with administrators"}
+            </p>
+
             <Badge
               variant="secondary"
-              className="bg-accent text-accent-foreground"
+              className="bg-accent text-accent-foreground p-1"
             >
-              <MessageSquare className="h-3 w-3 mr-1" />
+              <MessageSquare className="h-3 w-3 mr-1 text-primary" />
               {threads.filter((t) => t.unreadCount > 0).length} unread
             </Badge>
           </div>
 
-          {/* Filters - Same structure as Requests */}
           <div className="flex flex-col md:flex-row gap-4 mb-6">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -333,50 +339,53 @@ export default function MessagesPage() {
             </div>
           </div>
 
-          {/* Status Filter Tabs - Same structure as Requests */}
-          <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
-            {[
-              { value: "all", label: "All", count: threads.length },
-              {
-                value: "active",
-                label: "Active",
-                count: threads.filter((r) => r.status === "active").length,
-              },
-              {
-                value: "resolved",
-                label: "Resolved",
-                count: threads.filter((r) => r.status === "resolved").length,
-              },
-              {
-                value: "urgent",
-                label: "Urgent",
-                count: threads.filter((r) => r.priority === "urgent").length,
-              },
-            ].map((tab) => (
-              <button
-                key={tab.value}
-                className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-                  "bg-accent text-accent-foreground" // Always active for messages
-                }`}
-              >
-                {tab.label} ({tab.count})
-              </button>
-            ))}
-          </div>
+          {userRole === "admin" && (
+            <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+              {[
+                {
+                  value: "all" as const,
+                  label: "All",
+                  count: threads.length,
+                },
+                {
+                  value: "active" as const,
+                  label: "Active",
+                  count: allActiveCount,
+                },
+                {
+                  value: "urgent" as const,
+                  label: "Urgent",
+                  count: allUrgentCount,
+                },
+              ].map((tab) => (
+                <button
+                  key={tab.value}
+                  onClick={() =>
+                    setActiveFilter(tab.value as typeof activeFilter)
+                  }
+                  className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+                    activeFilter === tab.value
+                      ? "bg-accent text-accent-foreground"
+                      : "bg-input-background text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  {tab.label} ({tab.count})
+                </button>
+              ))}
+            </div>
+          )}
 
-          {/* Results Count - Same structure as Requests */}
           <div className="mb-4 text-sm text-muted-foreground">
-            Showing {threads.length} of {threads.length} conversations
+            Showing {filteredThreads.length} of {threads.length} conversations
           </div>
 
-          {/* Empty State for No Conversations */}
-          {threads.length === 0 && (
+          {filteredThreads.length === 0 && (
             <div className="text-center py-16 bg-card border border-border rounded-lg">
               <Inbox className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
               <h3 className="text-lg font-medium text-foreground mb-2">
                 No conversations found
               </h3>
-              <p className="text-muted-foreground mb-6">
+              <p className="text-muted-foreground">
                 {userRole === "admin"
                   ? "No requests to respond to yet."
                   : "No ongoing discussions."}
@@ -384,285 +393,292 @@ export default function MessagesPage() {
             </div>
           )}
 
-          {/* Message Threads - Same card structure as Requests */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Thread List */}
-            <Card className="lg:col-span-1">
-              <CardHeader className="pb-3">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    type="text"
-                    placeholder="Search conversations..."
-                    className="w-full pl-10 pr-4 py-2 border border-border rounded-lg bg-input-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-              </CardHeader>
-              <CardContent className="p-0">
-                <ScrollArea className="h-[650px]">
-                  <div className="divide-y divide-border">
-                    {threads.map((thread) => (
-                      <button
-                        key={thread.requestId}
-                        onClick={() => setSelectedThread(thread.requestId)}
-                        className={`w-full text-left p-4 hover:bg-muted/50 transition-colors ${
-                          selectedThread === thread.requestId
-                            ? "bg-muted border-l-4 border-l-accent"
-                            : "border-l-4 border-l-transparent"
-                        }`}
-                      >
-                        <div className="flex items-start gap-3">
-                          <Avatar className="h-10 w-10">
-                            <AvatarFallback
-                              className={
-                                thread.participant.role === "admin"
-                                  ? "bg-primary/10 text-primary"
-                                  : "bg-accent/10 text-accent"
-                              }
-                            >
-                              {thread.participant.role === "admin" ? (
-                                <Shield className="h-4 w-4" />
-                              ) : (
-                                <User className="h-4 w-4" />
-                              )}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between mb-1">
-                              <p className="text-sm font-medium text-foreground truncate">
-                                {thread.participant.name}
-                              </p>
-                              {thread.unreadCount > 0 && (
-                                <Badge
-                                  variant="default"
-                                  className="bg-accent text-accent-foreground text-xs h-5 w-5 flex items-center justify-center p-0"
-                                >
-                                  {thread.unreadCount}
-                                </Badge>
-                              )}
-                            </div>
-                            <p className="text-xs text-muted-foreground mb-1">
-                              {thread.requestName}
-                            </p>
-                            <p className="text-sm text-muted-foreground truncate">
-                              {thread.lastMessage}
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {formatTime(thread.lastMessageTime)}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-
-            {/* Message Thread */}
-            <Card className="lg:col-span-2">
-              {currentThread ? (
-                <>
-                  <CardHeader className="border-b border-border pb-4">
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-10 w-10">
-                        <AvatarFallback
-                          className={
-                            currentThread.participant.role === "admin"
-                              ? "bg-primary/10 text-primary"
-                              : "bg-accent/10 text-accent"
-                          }
+          {filteredThreads.length > 0 && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <Card className="lg:col-span-1 bg-card border border-border">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Conversations
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <ScrollArea className="h-[650px]">
+                    <div className="divide-y divide-border">
+                      {filteredThreads.map((thread) => (
+                        <button
+                          key={thread.requestId}
+                          onClick={() => setSelectedThread(thread.requestId)}
+                          className={`w-full text-left p-4 transition-colors ${
+                            currentThread?.requestId === thread.requestId
+                              ? "bg-muted border-l-4 border-l-accent"
+                              : "hover:bg-muted/50 border-l-4 border-l-transparent"
+                          }`}
                         >
-                          {currentThread.participant.role === "admin" ? (
-                            <Shield className="h-4 w-4" />
-                          ) : (
-                            <User className="h-4 w-4" />
-                          )}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1">
-                        <CardTitle className="text-lg text-foreground">
-                          {currentThread.participant.name}
-                        </CardTitle>
-                        <CardDescription className="text-muted-foreground">
-                          {currentThread.requestName}
-                        </CardDescription>
-                      </div>
-                      {currentThread.priority === "urgent" && (
-                        <Badge
-                          variant="secondary"
-                          className="bg-accent text-accent-foreground"
-                        >
-                          <Flag className="h-3 w-3 mr-1" />
-                          Urgent
-                        </Badge>
-                      )}
-                    </div>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <ScrollArea className="h-[500px] p-6">
-                      <div className="space-y-4">
-                        {currentMessages.map((message) => (
-                          <div
-                            key={message.id}
-                            className={`flex gap-3 ${
-                              message.sender ===
-                              (userRole === "admin" ? "admin" : "user")
-                                ? "flex-row-reverse"
-                                : "flex-row"
-                            }`}
-                          >
-                            <Avatar className="flex-shrink-0 h-8 w-8">
+                          <div className="flex items-start gap-3">
+                            <Avatar className="h-10 w-10">
                               <AvatarFallback
                                 className={
-                                  message.sender === "admin"
+                                  thread.participant.role === "admin"
                                     ? "bg-primary/10 text-primary"
                                     : "bg-accent/10 text-accent"
                                 }
                               >
-                                {getInitials(message.senderName)}
+                                {thread.participant.role === "admin" ? (
+                                  <Shield className="h-4 w-4" />
+                                ) : (
+                                  <User className="h-4 w-4" />
+                                )}
                               </AvatarFallback>
                             </Avatar>
-                            <div className={`flex-1 max-w-[75%]`}>
-                              <div
-                                className={`flex items-center gap-2 mb-1 ${
-                                  message.sender ===
-                                  (userRole === "admin" ? "admin" : "user")
-                                    ? "justify-end"
-                                    : ""
-                                }`}
-                              >
-                                <p className="text-xs text-muted-foreground">
-                                  {formatTime(message.timestamp)}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between mb-1 mr-1">
+                                <p className="text-sm font-medium text-foreground truncate">
+                                  {thread.participant.name}
                                 </p>
+                                {thread.unreadCount > 0 && (
+                                  <Badge
+                                    variant="default"
+                                    className="bg-accent text-accent-foreground text-xs h-5 w-5 flex items-center justify-center rounded-full"
+                                  >
+                                    {thread.unreadCount}
+                                  </Badge>
+                                )}
                               </div>
-                              <div
-                                className={`rounded-lg p-3 ${
-                                  message.sender ===
-                                  (userRole === "admin" ? "admin" : "user")
-                                    ? "bg-primary text-primary-foreground"
-                                    : "bg-muted text-foreground"
-                                }`}
-                              >
-                                <p className="text-sm">{message.content}</p>
-                                {message.attachments &&
-                                  message.attachments.length > 0 && (
-                                    <div className="mt-2 space-y-1">
-                                      {message.attachments.map((att, idx) => (
-                                        <div
-                                          key={idx}
-                                          className="flex items-center gap-1.5 text-xs opacity-90"
-                                        >
-                                          <FileText className="h-3 w-3" />
-                                          <span>{att.name}</span>
-                                          <span className="text-muted-foreground">
-                                            ({att.size})
-                                          </span>
-                                          <button
-                                            onClick={() => {
-                                              if (att.url) {
-                                                window.open(att.url, "_blank");
-                                              }
-                                            }}
-                                            className="ml-2 text-accent hover:text-accent-foreground"
-                                          >
-                                            <Download className="h-3 w-3" />
-                                          </button>
-                                        </div>
-                                      ))}
-                                    </div>
+                              <p className="text-xs text-muted-foreground mb-1">
+                                {thread.requestName}
+                              </p>
+                              {/* Message preview removed to save space */}
+                              <div className="flex items-center justify-between mt-2">
+                                <p className="text-xs text-muted-foreground">
+                                  {formatTime(thread.lastMessageTime)}
+                                </p>
+                                {userRole === "admin" &&
+                                  isUrgentThread(thread) && (
+                                    <Badge
+                                      variant="secondary"
+                                      className="bg-accent/0 text-accent-foreground"
+                                    >
+                                      <Flag className="h-3 w-3 text-primary" />
+                                    </Badge>
                                   )}
                               </div>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                    <div className="border-t border-border p-4">
-                      {/* Attached Files Preview */}
-                      {attachedFiles.length > 0 && (
-                        <div className="mb-3 flex flex-wrap gap-2">
-                          {attachedFiles.map((file, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center gap-2 bg-input-background border border-border rounded-lg px-3 py-2 text-xs"
+                        </button>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+
+              <Card className="lg:col-span-2 bg-card border border-border">
+                {currentThread ? (
+                  <>
+                    <CardHeader className="border-b border-border pb-4">
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-10 w-10">
+                          <AvatarFallback
+                            className={
+                              currentThread.participant.role === "admin"
+                                ? "bg-primary/10 text-primary"
+                                : "bg-accent/10 text-accent"
+                            }
+                          >
+                            {currentThread.participant.role === "admin" ? (
+                              <Shield className="h-4 w-4" />
+                            ) : (
+                              <User className="h-4 w-4" />
+                            )}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1">
+                          <CardTitle className="text-lg text-foreground">
+                            {currentThread.participant.name}
+                          </CardTitle>
+                          <CardDescription className="text-muted-foreground">
+                            {currentThread.requestName}
+                          </CardDescription>
+                        </div>
+                        {userRole === "admin" &&
+                          isUrgentThread(currentThread) && (
+                            <Badge
+                              variant="secondary"
+                              className="bg-accent p-1 text-accent-foreground"
                             >
-                              <FileText className="h-4 w-4 text-muted-foreground" />
-                              <div>
-                                <p className="text-foreground">{file.name}</p>
-                                <p className="text-muted-foreground">
-                                  {(file.size / (1024 * 1024)).toFixed(1)} MB
-                                </p>
+                              <Flag className="h-3 w-3 mr-1 text-primary" />
+                              Urgent
+                            </Badge>
+                          )}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <ScrollArea className="h-[500px] p-6">
+                        <div className="space-y-4">
+                          {currentMessages.map((message) => (
+                            <div
+                              key={message.id}
+                              className={`flex gap-3 ${
+                                message.sender ===
+                                (userRole === "admin" ? "admin" : "user")
+                                  ? "flex-row-reverse"
+                                  : "flex-row"
+                              }`}
+                            >
+                              <Avatar className="flex-shrink-0 h-8 w-8">
+                                <AvatarFallback
+                                  className={
+                                    message.sender === "admin"
+                                      ? "bg-primary/10 text-primary"
+                                      : "bg-accent/10 text-accent"
+                                  }
+                                >
+                                  {getInitials(message.senderName)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="flex-1 max-w-[75%]">
+                                <div
+                                  className={`flex items-center gap-2 mb-1 ${
+                                    message.sender ===
+                                    (userRole === "admin" ? "admin" : "user")
+                                      ? "justify-end"
+                                      : ""
+                                  }`}
+                                >
+                                  <p className="text-xs text-muted-foreground">
+                                    {formatTime(message.timestamp)}
+                                  </p>
+                                </div>
+                                <div
+                                  className={`rounded-lg p-3 ${
+                                    message.sender ===
+                                    (userRole === "admin" ? "admin" : "user")
+                                      ? "bg-primary text-primary-foreground"
+                                      : "bg-muted text-foreground"
+                                  }`}
+                                >
+                                  <p className="text-sm">{message.content}</p>
+                                  {message.attachments &&
+                                    message.attachments.length > 0 && (
+                                      <div className="mt-2 space-y-1">
+                                        {message.attachments.map((att, idx) => (
+                                          <div
+                                            key={idx}
+                                            className="flex items-center gap-1.5 text-xs opacity-90"
+                                          >
+                                            <FileText className="h-3 w-3" />
+                                            <span>{att.name}</span>
+                                            <span className="text-muted-foreground">
+                                              ({att.size})
+                                            </span>
+                                            <button
+                                              onClick={() => {
+                                                if (att.url) {
+                                                  window.open(
+                                                    att.url,
+                                                    "_blank",
+                                                  );
+                                                }
+                                              }}
+                                              className="ml-2 text-accent hover:text-accent-foreground"
+                                            >
+                                              <Download className="h-3 w-3" />
+                                            </button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                </div>
                               </div>
-                              <button
-                                onClick={() => removeAttachedFile(index)}
-                                className="text-destructive hover:text-destructive/80"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
                             </div>
                           ))}
                         </div>
-                      )}
+                      </ScrollArea>
 
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="hover:bg-accent hover:text-accent-foreground"
-                          title="Attach file"
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          <Paperclip className="h-4 w-4" />
-                        </Button>
-                        <input
-                          type="file"
-                          ref={fileInputRef}
-                          onChange={handleFileAttach}
-                          className="hidden"
-                          multiple
-                          accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.zip,.txt,.geojson,.shp"
-                        />
-                        <input
-                          type="text"
-                          value={newMessage}
-                          onChange={(e) => setNewMessage(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && !e.shiftKey) {
-                              e.preventDefault();
-                              sendMessage();
+                      <div className="border-t border-border p-4">
+                        {attachedFiles.length > 0 && (
+                          <div className="mb-3 flex flex-wrap gap-2">
+                            {attachedFiles.map((file, index) => (
+                              <div
+                                key={index}
+                                className="flex items-center gap-2 bg-input-background border border-border rounded-lg px-3 py-2 text-xs"
+                              >
+                                <FileText className="h-4 w-4 text-muted-foreground" />
+                                <div>
+                                  <p className="text-foreground">{file.name}</p>
+                                  <p className="text-muted-foreground">
+                                    {(file.size / (1024 * 1024)).toFixed(1)} MB
+                                  </p>
+                                </div>
+                                <button
+                                  onClick={() => removeAttachedFile(index)}
+                                  className="text-destructive hover:text-destructive/80"
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="hover:bg-accent hover:text-accent-foreground"
+                            title="Attach file"
+                            onClick={() => fileInputRef.current?.click()}
+                          >
+                            <Paperclip className="h-4 w-4" />
+                          </Button>
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            onChange={handleFileAttach}
+                            className="hidden"
+                            multiple
+                            accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.zip,.txt,.geojson,.shp"
+                          />
+                          <input
+                            type="text"
+                            value={newMessage}
+                            onChange={(e) => setNewMessage(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                sendMessage();
+                              }
+                            }}
+                            placeholder="Type your message..."
+                            className="flex-1 px-3 py-2 border border-border rounded-lg bg-input-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                          />
+                          <Button
+                            size="sm"
+                            className="bg-accent text-accent-foreground hover:bg-accent/90"
+                            onClick={sendMessage}
+                            disabled={
+                              !newMessage.trim() && attachedFiles.length === 0
                             }
-                          }}
-                          placeholder="Type your message..."
-                          className="flex-1 px-3 py-2 border border-border rounded-lg bg-input-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                        />
-                        <Button
-                          size="sm"
-                          className="bg-accent text-accent-foreground hover:bg-accent/90"
-                          onClick={sendMessage}
-                          disabled={
-                            !newMessage.trim() && attachedFiles.length === 0
-                          }
-                        >
-                          <Send className="h-4 w-4" />
-                        </Button>
+                          >
+                            <Send className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
-                    </div>
+                    </CardContent>
+                  </>
+                ) : (
+                  <CardContent className="p-16 text-center">
+                    <Inbox className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+                    <h3 className="text-lg font-medium text-foreground mb-2">
+                      No conversation selected
+                    </h3>
+                    <p className="text-muted-foreground">
+                      Select a conversation from the list to start messaging.
+                    </p>
                   </CardContent>
-                </>
-              ) : (
-                <CardContent className="p-16 text-center">
-                  <Inbox className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-                  <h3 className="text-lg font-medium text-foreground mb-2">
-                    No conversation selected
-                  </h3>
-                  <p className="text-muted-foreground">
-                    Select a conversation from the list to start messaging
-                  </p>
-                </CardContent>
-              )}
-            </Card>
-          </div>
+                )}
+              </Card>
+            </div>
+          )}
         </>
       )}
     </div>

@@ -1,7 +1,7 @@
 // app/(app)/notifications/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Bell,
   CheckCircle,
@@ -9,22 +9,12 @@ import {
   Download,
   FileText,
   MessageSquare,
-  Clock,
-  User,
-  Shield,
-  Trash,
   Check,
-  Inbox,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAuth } from "@/components/AuthProvider";
 
 type NotificationType =
   | "request_submitted"
@@ -46,9 +36,7 @@ interface Notification {
   userName?: string;
 }
 
-// Mock notifications - in production, this would come from API
 const mockNotifications: Notification[] = [
-  // Admin notifications
   {
     id: "notif-001",
     type: "request_submitted",
@@ -73,7 +61,6 @@ const mockNotifications: Notification[] = [
     userId: "user-def456",
     userName: "John Malek",
   },
-  // User notifications
   {
     id: "notif-003",
     type: "request_approved",
@@ -113,15 +100,18 @@ const notificationConfig = {
   },
   request_approved: {
     icon: CheckCircle,
-    iconClass: "bg-green-100 text-green-600",
+    iconClass:
+      "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-200",
   },
   request_rejected: {
     icon: XCircle,
-    iconClass: "bg-destructive/10 text-destructive",
+    iconClass:
+      "bg-destructive/10 text-destructive dark:bg-destructive/20 dark:text-destructive-foreground",
   },
   data_ready: {
     icon: Download,
-    iconClass: "bg-accent/20 text-accent",
+    iconClass:
+      "bg-accent/20 text-accent dark:bg-accent/25 dark:text-accent-foreground",
   },
   new_message: {
     icon: MessageSquare,
@@ -130,26 +120,24 @@ const notificationConfig = {
 };
 
 export default function NotificationsPage() {
-  const [userRole, setUserRole] = useState<UserRole>("admin"); // Changed to mutable state
+  const { user, status } = useAuth();
+  const userRole = user.role as UserRole;
+
   const [notifications, setNotifications] =
     useState<Notification[]>(mockNotifications);
   const [filter, setFilter] = useState<"all" | "unread" | NotificationType>(
-    "all"
+    "all",
   );
 
+  if (status === "loading") {
+    return (
+      <div className="p-6 max-w-[90%] mx-auto text-sm text-muted-foreground">
+        Loading notifications…
+      </div>
+    );
+  }
+
   const unreadCount = notifications.filter((n) => !n.read).length;
-  const adminUnreadCount = notifications.filter(
-    (n) =>
-      !n.read && (n.type === "request_submitted" || n.type === "new_message")
-  ).length;
-  const userUnreadCount = notifications.filter(
-    (n) =>
-      !n.read &&
-      (n.type === "request_approved" ||
-        n.type === "request_rejected" ||
-        n.type === "data_ready" ||
-        n.type === "new_message")
-  ).length;
 
   const filteredNotifications = notifications.filter((n) => {
     if (filter === "unread") return !n.read;
@@ -159,7 +147,7 @@ export default function NotificationsPage() {
 
   const markAsRead = (id: string) => {
     setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+      prev.map((n) => (n.id === id ? { ...n, read: true } : n)),
     );
   };
 
@@ -174,7 +162,13 @@ export default function NotificationsPage() {
   const getNotificationIcon = (type: NotificationType) => {
     const config = notificationConfig[type];
     const Icon = config.icon;
-    return <Icon className={`h-5 w-5 ${config.iconClass}`} />;
+    return (
+      <div
+        className={`inline-flex h-9 w-9 items-center justify-center rounded-full ${config.iconClass}`}
+      >
+        <Icon className="h-4 w-4" />
+      </div>
+    );
   };
 
   const formatTime = (timestamp: string) => {
@@ -187,67 +181,49 @@ export default function NotificationsPage() {
     return `${Math.floor(diffInMinutes / 1440)}d ago`;
   };
 
-  // Remove unavailable notification types based on role
   const getAvailableFilters = () => {
     const baseFilters = [
-      { value: "all", label: "All Notifications" },
-      { value: "unread", label: "Unread Only" },
-    ] as const;
+      { value: "all" as const, label: "All" },
+      { value: "unread" as const, label: "Unread" },
+    ];
 
     if (userRole === "admin") {
       return [
         ...baseFilters,
-        { value: "request_submitted", label: "New Requests" },
-        { value: "new_message", label: "Messages" },
+        { value: "request_submitted" as const, label: "New Requests" },
+        { value: "new_message" as const, label: "Messages" },
       ];
     } else {
       return [
         ...baseFilters,
-        { value: "request_approved", label: "Approvals" },
-        { value: "request_rejected", label: "Rejections" },
-        { value: "data_ready", label: "Data Ready" },
-        { value: "new_message", label: "Messages" },
+        { value: "request_approved" as const, label: "Approvals" },
+        { value: "request_rejected" as const, label: "Rejections" },
+        { value: "data_ready" as const, label: "Data Ready" },
+        { value: "new_message" as const, label: "Messages" },
       ];
     }
   };
 
+  const getFilterCount = (value: "all" | "unread" | NotificationType) => {
+    if (value === "all") return notifications.length;
+    if (value === "unread") return unreadCount;
+    return notifications.filter((n) => n.type === value).length;
+  };
+
   return (
     <div className="p-6 max-w-[90%] mx-auto">
-      {/* Role Switcher (Dev Only) - Same as other pages */}
-      <div className="mb-6 p-3 bg-muted rounded-lg text-sm">
-        <span className="font-medium">Dev Role Switcher:</span>
-        {(["public", "registered", "verified", "admin"] as const).map(
-          (role) => (
-            <button
-              key={role}
-              onClick={() => setUserRole(role)}
-              className={`ml-2 px-3 py-1 rounded ${
-                userRole === role
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-background hover:bg-muted"
-              }`}
-            >
-              {role}
-            </button>
-          )
-        )}
-      </div>
-
       {/* Public User View */}
       {userRole === "public" && (
         <div className="text-center py-24 px-6 bg-card border border-border rounded-xl">
           <Bell className="mx-auto h-16 w-16 text-muted-foreground mb-6" />
           <h2 className="text-2xl font-semibold text-foreground mb-3">
-            Sign In to Access Notifications
+            Sign in to access notifications
           </h2>
           <p className="text-lg text-muted-foreground mb-8 max-w-md mx-auto">
             Notifications are only available to registered users to keep you
             updated on your data requests.
           </p>
-          <Button
-            size="lg"
-            className="bg-accent text-accent-foreground hover:bg-accent/90"
-          >
+          <Button className="bg-accent text-accent-foreground hover:bg-accent/90">
             Sign In
           </Button>
         </div>
@@ -258,13 +234,11 @@ export default function NotificationsPage() {
         <>
           {/* Header */}
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-            <div>
-              <p className="text-muted-foreground">
-                {userRole === "admin"
-                  ? "Track user requests and messages"
-                  : "Stay updated on your data requests"}
-              </p>
-            </div>
+            <p className="text-muted-foreground">
+              {userRole === "admin"
+                ? "Track user requests and messages"
+                : "Stay updated on your data requests"}
+            </p>
             {unreadCount > 0 && (
               <Button
                 size="sm"
@@ -273,12 +247,12 @@ export default function NotificationsPage() {
                 className="hover:bg-accent hover:text-accent-foreground"
               >
                 <Check className="h-4 w-4 mr-1.5" />
-                Mark All as Read ({unreadCount})
+                Mark all as read ({unreadCount})
               </Button>
             )}
           </div>
 
-          {/* Filter Tabs */}
+          {/* Filter Tabs – same pattern as Requests */}
           <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
             {getAvailableFilters().map((tab) => (
               <button
@@ -290,45 +264,16 @@ export default function NotificationsPage() {
                     : "bg-input-background text-muted-foreground hover:bg-muted hover:text-foreground"
                 }`}
               >
-                {tab.label}
-                {tab.value === "unread" && (
-                  <Badge
-                    variant="secondary"
-                    className="ml-2 bg-accent text-accent-foreground"
-                  >
-                    {userRole === "admin" ? adminUnreadCount : userUnreadCount}
-                  </Badge>
-                )}
+                {tab.label} ({getFilterCount(tab.value)})
               </button>
             ))}
           </div>
 
-          {/* Badge Summary */}
-          <div className="mb-6 p-4 bg-card border border-border rounded-lg">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              {getAvailableFilters()
-                .slice(2)
-                .map((f) => {
-                  const count = notifications.filter(
-                    (n) => n.type === f.value && !n.read
-                  ).length;
-                  return (
-                    <div key={f.value} className="text-center">
-                      <p className="text-2xl font-bold text-foreground">
-                        {count}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{f.label}</p>
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-
           {/* Notifications List */}
-          <Card>
+          <Card className="bg-card border border-border">
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
-                <span>Recent Activity</span>
+                <span>Recent activity</span>
                 <span className="text-sm text-muted-foreground font-normal">
                   {filteredNotifications.length} notifications
                 </span>
@@ -336,7 +281,7 @@ export default function NotificationsPage() {
             </CardHeader>
             <CardContent className="p-0">
               {filteredNotifications.length > 0 ? (
-                <div className="divide-y">
+                <div className="divide-y divide-border">
                   {filteredNotifications.map((notification) => (
                     <div
                       key={notification.id}
@@ -368,18 +313,20 @@ export default function NotificationsPage() {
                         </p>
                         <div className="flex items-center gap-4 text-xs text-muted-foreground">
                           <span>{formatTime(notification.timestamp)}</span>
-                          <span
-                            className="hover:text-accent cursor-pointer"
+                          <button
+                            type="button"
+                            className="hover:text-accent"
                             onClick={() => markAsRead(notification.id)}
                           >
                             Mark as read
-                          </span>
-                          <span
-                            className="hover:text-destructive cursor-pointer"
+                          </button>
+                          <button
+                            type="button"
+                            className="hover:text-destructive"
                             onClick={() => deleteNotification(notification.id)}
                           >
                             Delete
-                          </span>
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -393,8 +340,8 @@ export default function NotificationsPage() {
                   </h3>
                   <p className="text-muted-foreground">
                     {filter === "unread"
-                      ? "You're all caught up!"
-                      : "Notifications will appear here"}
+                      ? "You are all caught up!"
+                      : "Notifications will appear here."}
                   </p>
                 </div>
               )}

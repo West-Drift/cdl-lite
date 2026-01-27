@@ -15,16 +15,15 @@ import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import {
   MapPin,
-  Layers,
-  CheckCircle2,
-  Download,
-  AlertCircle,
   Upload,
+  CheckCircle2,
+  AlertCircle,
   X,
   FileType,
-  ChevronLeft,
 } from "lucide-react";
 import { MapCanvas } from "@/components/MapCanvas";
+
+type UserRole = "public" | "registered" | "verified" | "admin";
 
 interface MapSelectorProps {
   userRole: UserRole;
@@ -100,14 +99,16 @@ export function MapSelector({ userRole }: MapSelectorProps) {
                 Upload Custom Boundary
               </TabsTrigger>
             </TabsList>
+
             <TabsContent value="map" className="space-y-6">
               <MapCanvas userRole={userRole} />
             </TabsContent>
+
             <TabsContent value="custom" className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Upload Area */}
                 <div>
-                  <Label className="text-gray-700 mb-2">
+                  <Label className="mb-2 text-foreground">
                     Upload Shapefile or GeoJSON
                   </Label>
                   <div
@@ -116,17 +117,17 @@ export function MapSelector({ userRole }: MapSelectorProps) {
                     onDragLeave={handleDragLeave}
                     className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
                       isDragging
-                        ? "border-[#05487f] bg-blue-50"
-                        : "border-gray-300"
+                        ? "border-primary bg-primary/5"
+                        : "border-border bg-card"
                     }`}
                   >
                     {!uploadedFile ? (
                       <>
-                        <Upload className="size-12 text-gray-400 mx-auto mb-4" />
-                        <h4 className="text-gray-900 mb-2">
+                        <Upload className="size-12 text-muted-foreground mx-auto mb-4" />
+                        <h4 className="text-foreground mb-2">
                           Drag and drop your file here
                         </h4>
-                        <p className="text-sm text-gray-600 mb-4">
+                        <p className="text-sm text-muted-foreground mb-4">
                           or click to browse
                         </p>
                         <input
@@ -135,31 +136,37 @@ export function MapSelector({ userRole }: MapSelectorProps) {
                           onChange={handleFileChange}
                           className="hidden"
                           id="file-upload"
+                          disabled={userRole === "public"}
                         />
                         <label htmlFor="file-upload">
-                          <Button type="button" variant="outline" asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            asChild
+                            disabled={userRole === "public"}
+                          >
                             <span>Browse Files</span>
                           </Button>
                         </label>
-                        <p className="text-xs text-gray-500 mt-4">
+                        <p className="text-xs text-muted-foreground mt-4">
                           Supported formats: Shapefile (.shp in .zip), GeoJSON
                           (.geojson)
                         </p>
-                        <p className="text-xs text-gray-500">
+                        <p className="text-xs text-muted-foreground">
                           Max file size: 50 MB
                         </p>
                       </>
                     ) : (
                       <div className="space-y-4">
-                        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                        <div className="bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-lg p-4">
                           <div className="flex items-start justify-between">
                             <div className="flex items-start gap-3">
-                              <FileType className="size-8 text-green-600" />
+                              <FileType className="size-8 text-emerald-600 dark:text-emerald-400" />
                               <div className="text-left">
-                                <p className="text-sm text-gray-900">
+                                <p className="text-sm text-foreground">
                                   {uploadedFile.name}
                                 </p>
-                                <p className="text-xs text-gray-500">
+                                <p className="text-xs text-muted-foreground">
                                   {(uploadedFile.size / 1024 / 1024).toFixed(2)}{" "}
                                   MB
                                 </p>
@@ -175,9 +182,9 @@ export function MapSelector({ userRole }: MapSelectorProps) {
                             </Button>
                           </div>
                         </div>
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                          <CheckCircle2 className="size-5 text-blue-600 mx-auto mb-2" />
-                          <p className="text-sm text-blue-900">
+                        <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
+                          <CheckCircle2 className="size-5 text-primary mx-auto mb-2" />
+                          <p className="text-sm text-foreground text-center">
                             File uploaded successfully
                           </p>
                         </div>
@@ -186,11 +193,12 @@ export function MapSelector({ userRole }: MapSelectorProps) {
                   </div>
 
                   {userRole === "public" && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
+                    <div className="bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg p-3 mt-4">
                       <div className="flex gap-2">
-                        <AlertCircle className="size-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                        <p className="text-sm text-amber-900">
-                          Custom shapefile uploads require a registered account
+                        <AlertCircle className="size-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                        <p className="text-sm text-amber-900 dark:text-amber-100">
+                          Custom shapefile uploads require a registered account.
+                          Sign in or create an account to enable uploads.
                         </p>
                       </div>
                     </div>
@@ -202,7 +210,7 @@ export function MapSelector({ userRole }: MapSelectorProps) {
                   <div>
                     <Label
                       htmlFor="custom-notes"
-                      className="text-gray-700 mb-2"
+                      className="mb-2 text-foreground"
                     >
                       Request Notes (Optional)
                     </Label>
@@ -213,27 +221,27 @@ export function MapSelector({ userRole }: MapSelectorProps) {
                       value={customRequestNotes}
                       onChange={(e) => setCustomRequestNotes(e.target.value)}
                     />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Specify which datasets you need for this custom boundary
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Specify which datasets you need for this custom boundary.
                     </p>
                   </div>
 
-                  <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                    <h4 className="text-sm text-gray-900">
+                  <div className="bg-muted rounded-lg p-4 space-y-3">
+                    <h4 className="text-sm text-foreground">
                       Custom Request Process
                     </h4>
-                    <ol className="text-sm text-gray-600 space-y-2 list-decimal list-inside">
-                      <li>Upload your shapefile or GeoJSON</li>
-                      <li>Add notes about required datasets</li>
-                      <li>Admin reviews and processes your boundary</li>
-                      <li>Data is clipped to your custom area</li>
-                      <li>You&apos;ll be notified when ready to download</li>
+                    <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
+                      <li>Upload your shapefile or GeoJSON.</li>
+                      <li>Add notes about required datasets.</li>
+                      <li>Admin reviews and processes your boundary.</li>
+                      <li>Data is clipped to your custom area.</li>
+                      <li>You&apos;ll be notified when ready to download.</li>
                     </ol>
                   </div>
 
                   {uploadedFile && (
                     <Button
-                      className="w-full bg-[#eb9c5a] hover:bg-[#d88a4a]"
+                      className="w-full"
                       onClick={() => {
                         alert("Submit Custom Request");
                       }}

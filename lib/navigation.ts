@@ -5,7 +5,9 @@ export type NavItem = {
   title: string;
   href: string;
   icon: LucideIcon;
-  roles?: ("admin" | "researcher" | "guest")[];
+  roles?: ("public" | "registered" | "verified" | "admin")[];
+  // optional badge flag (dot only)
+  hasActivity?: boolean;
 };
 
 import {
@@ -24,38 +26,54 @@ export const navItems: NavItem[] = [
     title: "Dashboard",
     href: "/dashboard",
     icon: LayoutDashboard,
-    roles: ["admin", "researcher", "guest"],
+    roles: ["public", "registered", "verified", "admin"],
   },
   {
     title: "Data Catalog",
     href: "/catalog",
     icon: Database,
-    roles: ["admin", "researcher"],
+    roles: ["public", "registered", "verified", "admin"],
   },
   {
     title: "Map Explorer",
     href: "/map",
     icon: MapPin,
-    roles: ["admin", "researcher"],
+    roles: ["public", "registered", "verified", "admin"],
   },
-  { title: "Requests", href: "/requests", icon: FileCheck, roles: ["admin"] },
+  {
+    title: "Requests",
+    href: "/requests",
+    icon: FileCheck,
+    roles: ["registered", "verified", "admin"],
+    // later: drive this from real data
+    hasActivity: true, // temporary to see the green dot
+  },
   {
     title: "Messages",
     href: "/messages",
     icon: MessageCircle,
-    roles: ["admin", "researcher"],
+    roles: ["registered", "verified", "admin"],
+    // later: drive this from real data
+    hasActivity: true, // temporary to see the green dot
   },
   {
     title: "Notifications",
     href: "/notifications",
     icon: Bell,
-    roles: ["admin", "researcher", "guest"],
+    roles: ["registered", "verified", "admin"],
+    // later: drive this from real data
+    hasActivity: true, // temporary to see the green dot
   },
   {
     title: "Profile",
     href: "/profile",
     icon: User,
-    roles: ["admin", "researcher", "guest"],
+    roles: ["registered", "verified", "admin"],
   },
-  { title: "Admin Panel", href: "/admin", icon: ShieldCheck, roles: ["admin"] },
+  {
+    title: "Admin Panel",
+    href: "/admin",
+    icon: ShieldCheck,
+    roles: ["admin"],
+  },
 ];
