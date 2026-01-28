@@ -101,7 +101,7 @@ export function MapSelector({ userRole }: MapSelectorProps) {
             </TabsList>
 
             <TabsContent value="map" className="space-y-6">
-              <MapCanvas userRole={userRole} />
+              <MapCanvas />
             </TabsContent>
 
             <TabsContent value="custom" className="space-y-6">
