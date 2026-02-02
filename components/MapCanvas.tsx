@@ -9,15 +9,21 @@ import {
   ZoomIn,
   ZoomOut,
   LocateFixed,
-  Ruler,
-  BarChart3,
   Menu,
+  Layers,
+  Pentagon,
+  Square,
+  Pencil,
 } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 
 type UserRole = "public" | "registered" | "verified" | "admin";
 
 type SidebarMode = "search" | "results";
+
+type BaseLayer = "map" | "satellite";
+
+type SelectionMode = null | "rectangle" | "click";
 
 interface BoundaryLevelOption {
   id: string;
@@ -35,10 +41,17 @@ interface ResultItem {
 export function MapCanvas() {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
+  const currentTileLayerRef = useRef<L.TileLayer | null>(null);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [mode, setMode] = useState<SidebarMode>("search");
   const [isSearching, setIsSearching] = useState(false);
+
+  // Map tools state
+  const [isLayerToolExpanded, setIsLayerToolExpanded] = useState(false);
+  const [isBoundaryToolExpanded, setIsBoundaryToolExpanded] = useState(false);
+  const [baseLayer, setBaseLayer] = useState<BaseLayer>("satellite");
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>(null);
 
   const { user } = useAuth();
   const userRole = (user?.role ?? "public") as UserRole;
@@ -75,15 +88,17 @@ export function MapCanvas() {
       preferCanvas: true,
     }).setView([-1.2921, 36.8219], 6);
 
-    L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    const satelliteTileLayer = L.tileLayer(
+      "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
       {
-        attribution: "© Acre Africa © Esri",
-        maxZoom: 18,
+        attribution: "© Acre Africa © Google Maps",
+        maxZoom: 20,
       },
     ).addTo(map);
 
+    currentTileLayerRef.current = satelliteTileLayer;
     mapInstanceRef.current = map;
+
     return () => {
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
@@ -91,6 +106,55 @@ export function MapCanvas() {
       }
     };
   }, []);
+
+  // Handle base layer switching
+  function handleBaseLayerChange(layer: BaseLayer) {
+    if (!mapInstanceRef.current || !currentTileLayerRef.current) return;
+
+    const map = mapInstanceRef.current;
+
+    // Remove current tile layer
+    map.removeLayer(currentTileLayerRef.current);
+
+    // Add new tile layer
+    let newTileLayer: L.TileLayer;
+    if (layer === "map") {
+      newTileLayer = L.tileLayer(
+        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        {
+          attribution: "© OpenStreetMap contributors",
+          maxZoom: 19,
+        },
+      ).addTo(map);
+    } else {
+      newTileLayer = L.tileLayer(
+        "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+        {
+          attribution: "© Acre Africa © Google Maps",
+          maxZoom: 20,
+        },
+      ).addTo(map);
+    }
+
+    currentTileLayerRef.current = newTileLayer;
+    setBaseLayer(layer);
+  }
+
+  // Handle selection mode changes
+  function handleSelectionModeChange(newMode: SelectionMode) {
+    setSelectionMode(newMode);
+    // TODO: Enable/disable drawing tools on map based on mode
+    if (newMode === "rectangle") {
+      // Enable rectangle selection tool
+      console.log("Rectangle selection mode activated");
+    } else if (newMode === "click") {
+      // Enable click selection tool
+      console.log("Click selection mode activated");
+    } else {
+      // Disable all selection tools
+      console.log("Selection mode deactivated");
+    }
+  }
 
   // Helpers to show a polygon on map (mocked)
   function showGeometryOnMap(label: string) {
@@ -236,7 +300,7 @@ export function MapCanvas() {
     const mapped: ResultItem[] = mockDatasets.map((name, idx) => ({
       id: `mock-${idx}`,
       name,
-      type: "Raster",
+      type: "GeoTIFF",
       category: "Climate",
       size: "50 MB",
     }));
@@ -272,6 +336,12 @@ export function MapCanvas() {
     alert(`Request submitted for dataset: ${id}`);
   }
 
+  function handleChart(id: string): void {
+    throw new Error("Function not implemented.");
+  }
+
+  const [searchTerm, setSearchTerm] = useState<string>("");
+
   return (
     <div className="flex h-full">
       {/* Sidebar */}
@@ -283,6 +353,7 @@ export function MapCanvas() {
         <MapSidebar
           userRole={userRole}
           mode={mode}
+          onModeChange={setMode}
           onBackToSearch={() => setMode("search")}
           onSearch={handleSearch}
           isSearching={isSearching}
@@ -305,8 +376,11 @@ export function MapCanvas() {
           totalCount={totalCount}
           activeLayerIds={activeLayerIds}
           onToggleLayer={handleToggleLayer}
+          onChart={handleChart}
           onDownload={handleDownload}
           onRequest={handleRequest}
+          isSidebarOpen={isSidebarOpen}
+          onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         />
       </div>
 
@@ -314,39 +388,157 @@ export function MapCanvas() {
       <div className="relative flex-1">
         <div ref={mapRef} className="absolute inset-0" />
 
-        {/* Toggle Sidebar Button */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute top-4 left-4 z-1000 bg-accent"
-          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-        >
-          <Menu className="h-3 w-3" />
-        </Button>
+        {/* Top Right Tools Container */}
+        <div className="absolute top-4 right-4 z-1000 flex flex-col gap-2 items-end">
+          {/* Search Bar */}
+          <input
+            type="text"
+            placeholder="Search locations on map..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-[280px] px-4 py-2 border border-border rounded-3xl bg-input-background focus:outline-none focus:ring-2 focus:ring-primary placeholder:text-muted-foreground text-sm"
+          />
+
+          {/* Map Layer Toggle Tool */}
+          <div className="flex items-center gap-1 bg-card border border-border rounded-md shadow-sm">
+            {isLayerToolExpanded && (
+              <>
+                <div className="h-6 w-px bg-border" />
+                <Button
+                  size="sm"
+                  variant={baseLayer === "map" ? "default" : "ghost"}
+                  onClick={() => handleBaseLayerChange("map")}
+                  className={`h-8 px-3 text-xs bg-primary/10 ${
+                    baseLayer === "map"
+                      ? "bg-primary text-accent"
+                      : "hover:bg-accent/80"
+                  }`}
+                >
+                  Map
+                </Button>
+                <Button
+                  size="sm"
+                  variant={baseLayer === "satellite" ? "default" : "ghost"}
+                  onClick={() => handleBaseLayerChange("satellite")}
+                  className={`h-8 px-3 text-xs bg-primary/10 ${
+                    baseLayer === "satellite"
+                      ? "bg-primary text-accent"
+                      : "hover:bg-accent/80"
+                  }`}
+                >
+                  Satellite
+                </Button>
+              </>
+            )}{" "}
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => setIsLayerToolExpanded(!isLayerToolExpanded)}
+              className={`h-8 w-8 ${
+                isLayerToolExpanded
+                  ? "bg-accent text-accent-foreground"
+                  : "hover:bg-accent/80"
+              }`}
+            >
+              <Layers className="h-3 w-3" />
+            </Button>
+          </div>
+
+          {/* Boundary Selection Tool */}
+          <div className="flex items-center gap-1 bg-card border border-border rounded-md shadow-sm">
+            {isBoundaryToolExpanded && (
+              <>
+                <div className="h-6 w-px bg-border" />
+                <Button
+                  size="icon"
+                  variant={selectionMode === "rectangle" ? "default" : "ghost"}
+                  onClick={() =>
+                    handleSelectionModeChange(
+                      selectionMode === "rectangle" ? null : "rectangle",
+                    )
+                  }
+                  className={`h-8 w-8 bg-primary/10 ${
+                    selectionMode === "rectangle"
+                      ? "bg-primary text-accent"
+                      : "hover:bg-accent/80"
+                  }`}
+                  title="Draw to select polygons"
+                >
+                  <Square className="h-3 w-3" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant={selectionMode === "click" ? "default" : "ghost"}
+                  onClick={() =>
+                    handleSelectionModeChange(
+                      selectionMode === "click" ? null : "click",
+                    )
+                  }
+                  className={`h-8 w-8 bg-primary/10 ${
+                    selectionMode === "click"
+                      ? "bg-primary text-accent"
+                      : "hover:bg-accent/80"
+                  }`}
+                  title="Click to select polygons"
+                >
+                  <Pencil className="h-3 w-3" />
+                </Button>
+              </>
+            )}
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => {
+                setIsBoundaryToolExpanded(!isBoundaryToolExpanded);
+                if (isBoundaryToolExpanded) {
+                  handleSelectionModeChange(null);
+                }
+              }}
+              className={`h-8 w-8 ${
+                isBoundaryToolExpanded
+                  ? "bg-accent text-accent-foreground"
+                  : "hover:bg-accent/80"
+              }`}
+            >
+              <Pentagon className="h-3 w-3" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Toggle Sidebar Button - Only shows when sidebar is collapsed */}
+        {!isSidebarOpen && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute top-4 left-4 z-1000 h-8 w-8 bg-accent rounded-full"
+            onClick={() => setIsSidebarOpen(true)}
+          >
+            <Menu className="h-3 w-3" />
+          </Button>
+        )}
 
         {/* Map Tools (Bottom Right) */}
         <div className="absolute bottom-4 right-4 flex flex-col gap-2 z-1000">
-          <Button size="icon" variant="outline" className="h-8 w-8">
-            <ZoomIn className="h-3 w-3" />
-          </Button>
-          <Button size="icon" variant="outline" className="h-8 w-8">
-            <ZoomOut className="h-3 w-3" />
-          </Button>
-          <Button size="icon" variant="outline" className="h-8 w-8">
+          <Button
+            size="icon"
+            variant="outline"
+            className="h-8 w-8 bg-card hover:bg-accent/80"
+          >
             <LocateFixed className="h-3 w-3" />
-          </Button>
-          <Button size="icon" variant="outline" className="h-8 w-8">
-            <Ruler className="h-3 w-3" />
           </Button>
           <Button
             size="icon"
             variant="outline"
-            className="h-8 w-8"
-            onClick={() => {
-              alert("Show Chart Popup");
-            }}
+            className="h-8 w-8 bg-card hover:bg-accent/80"
           >
-            <BarChart3 className="h-3 w-3" />
+            <ZoomIn className="h-3 w-3" />
+          </Button>
+          <Button
+            size="icon"
+            variant="outline"
+            className="h-8 w-8 mb-4 bg-card hover:bg-accent/80"
+          >
+            <ZoomOut className="h-3 w-3" />
           </Button>
         </div>
       </div>

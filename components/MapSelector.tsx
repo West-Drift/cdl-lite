@@ -142,6 +142,7 @@ export function MapSelector({ userRole }: MapSelectorProps) {
                           <Button
                             type="button"
                             variant="outline"
+                            className="py-3 px-2 bg-primary text-white hover:text-primary"
                             asChild
                             disabled={userRole === "public"}
                           >
