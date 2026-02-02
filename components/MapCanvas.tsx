@@ -107,6 +107,18 @@ export function MapCanvas() {
     };
   }, []);
 
+  // Invalidate map size when sidebar toggles
+  useEffect(() => {
+    if (mapInstanceRef.current) {
+      // Wait for CSS transition to complete (300ms from transition-all duration-300)
+      const timer = setTimeout(() => {
+        mapInstanceRef.current?.invalidateSize();
+      }, 350);
+
+      return () => clearTimeout(timer);
+    }
+  }, [isSidebarOpen]);
+
   // Handle base layer switching
   function handleBaseLayerChange(layer: BaseLayer) {
     if (!mapInstanceRef.current || !currentTileLayerRef.current) return;
@@ -145,13 +157,10 @@ export function MapCanvas() {
     setSelectionMode(newMode);
     // TODO: Enable/disable drawing tools on map based on mode
     if (newMode === "rectangle") {
-      // Enable rectangle selection tool
       console.log("Rectangle selection mode activated");
     } else if (newMode === "click") {
-      // Enable click selection tool
       console.log("Click selection mode activated");
     } else {
-      // Disable all selection tools
       console.log("Selection mode deactivated");
     }
   }
@@ -247,8 +256,8 @@ export function MapCanvas() {
 
     // TODO: fetch admin3 list from DB
     setAdmin3Options([
-      { id: `${value}-ward1`, name: "Ward 1" },
-      { id: `${value}-ward2`, name: "Ward 2" },
+      { id: `${value}-subsub1`, name: "Sub-subregion 1" },
+      { id: `${value}-subsub2`, name: "Sub-subregion 2" },
     ]);
     setAdmin4Options([]);
 
@@ -267,14 +276,14 @@ export function MapCanvas() {
 
     // TODO: fetch admin4 list from DB
     setAdmin4Options([
-      { id: `${value}-village1`, name: "Village 1" },
-      { id: `${value}-village2`, name: "Village 2" },
+      { id: `${value}-area1`, name: "Area 1" },
+      { id: `${value}-area2`, name: "Area 2" },
     ]);
 
     showGeometryOnMap(value);
   }
 
-  function handleAdmin4Change(id: string) {
+  async function handleAdmin4Change(id: string) {
     const value = id || null;
     setAdmin4(value);
 
@@ -283,20 +292,22 @@ export function MapCanvas() {
     }
   }
 
-  // Mock datasets for search results
-  const mockDatasets = [
-    "Kenya_Nairobi_County_24_Precipitation",
-    "Kenya_2024_NDVI",
-    "Kenya_2024_Soil_Moisture",
-    "Tanzania_2024_Land_Surface_Temperature",
-    "Uganda_2024_Wind_Speed",
-  ];
-
+  // Mock search results
   async function handleSearch() {
     setIsSearching(true);
 
-    // TODO: call API with {country, admin1..4, timeRange, dataSources}
-    // For now, return all mock datasets; in real use, filter on AOI.
+    // Simulate search delay
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Mock dataset names
+    const mockDatasets = [
+      "Precipitation Monthly (CHIRPS)",
+      "Temperature Daily (ERA5)",
+      "NDVI 16-day (MODIS)",
+      "Soil Moisture Weekly (SMAP)",
+      "Land Cover Annual (ESA CCI)",
+    ];
+
     const mapped: ResultItem[] = mockDatasets.map((name, idx) => ({
       id: `mock-${idx}`,
       name,
@@ -321,32 +332,39 @@ export function MapCanvas() {
   }
 
   function handleDownload(id: string) {
-    if (userRole === "public") {
-      alert("Sign in to download data.");
+    if (userRole !== "admin") {
+      alert("Access denied: Admin privileges required for direct download");
       return;
     }
+    // TODO: Call backend API with auth
     alert(`Download started for dataset: ${id}`);
   }
 
   function handleRequest(id: string) {
     if (userRole === "public") {
-      alert("Sign in to submit requests.");
+      alert("Please sign in to submit download requests");
       return;
     }
-    alert(`Request submitted for dataset: ${id}`);
+    // TODO: Call backend API to create download request
+    alert(`Download request submitted for dataset: ${id}`);
   }
 
-  function handleChart(id: string): void {
-    throw new Error("Function not implemented.");
+  function handleChart(id: string) {
+    if (userRole === "public") {
+      alert("Please sign in to view charts");
+      return;
+    }
+    // TODO: Implement chart visualization
+    alert(`Opening chart for dataset: ${id}`);
   }
 
   const [searchTerm, setSearchTerm] = useState<string>("");
 
   return (
-    <div className="flex h-full">
-      {/* Sidebar */}
+    <div className="flex h-[80vh] overflow-hidden">
+      {/* Sidebar with fixed width transition */}
       <div
-        className={`transition-all duration-300 ${
+        className={`transition-all duration-300 shrink-0 ${
           isSidebarOpen ? "w-80" : "w-0"
         } overflow-hidden`}
       >
@@ -384,9 +402,9 @@ export function MapCanvas() {
         />
       </div>
 
-      {/* Map Area */}
-      <div className="relative flex-1">
-        <div ref={mapRef} className="absolute inset-0" />
+      {/* Map Area - Takes remaining space */}
+      <div className="relative flex-1 h-[80vh]">
+        <div ref={mapRef} className="w-full h-[80vh]" />
 
         {/* Top Right Tools Container */}
         <div className="absolute top-4 right-4 z-1000 flex flex-col gap-2 items-end">
@@ -523,6 +541,7 @@ export function MapCanvas() {
             size="icon"
             variant="outline"
             className="h-8 w-8 bg-card hover:bg-accent/80"
+            onClick={() => mapInstanceRef.current?.locate({ setView: true })}
           >
             <LocateFixed className="h-3 w-3" />
           </Button>
@@ -530,6 +549,7 @@ export function MapCanvas() {
             size="icon"
             variant="outline"
             className="h-8 w-8 bg-card hover:bg-accent/80"
+            onClick={() => mapInstanceRef.current?.zoomIn()}
           >
             <ZoomIn className="h-3 w-3" />
           </Button>
@@ -537,6 +557,7 @@ export function MapCanvas() {
             size="icon"
             variant="outline"
             className="h-8 w-8 mb-4 bg-card hover:bg-accent/80"
+            onClick={() => mapInstanceRef.current?.zoomOut()}
           >
             <ZoomOut className="h-3 w-3" />
           </Button>

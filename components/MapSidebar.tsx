@@ -147,10 +147,30 @@ export function MapSidebar({
     );
   };
 
-  const canDownloadOrRequest = userRole !== "public";
+  // ========================================
+  // RBAC PERMISSIONS - GRANULAR CONTROL
+  // ========================================
+
+  // View/Hide: Everyone can view data on canvas
+  const canView = true;
+
+  // Chart: Only registered users and above
+  const canChart =
+    userRole === "registered" ||
+    userRole === "verified" ||
+    userRole === "admin";
+
+  // Request: Only registered users and above (to request download)
+  const canRequest =
+    userRole === "registered" ||
+    userRole === "verified" ||
+    userRole === "admin";
+
+  // Download: Only admins can directly download
+  const canDownload = userRole === "admin";
 
   return (
-    <div className="w-80 bg-card border-r border-border flex flex-col h-full overflow-hidden">
+    <div className="w-80 bg-card border-r border-border flex flex-col h-[80vh] overflow-hidden">
       {/* Sidebar Quick Tabs */}
       <div className="border-b border-border relative">
         <div className="grid grid-cols-2">
@@ -508,12 +528,16 @@ export function MapSidebar({
                       <p className="text-xs text-muted-foreground mb-2">
                         {result.category} • {result.size}
                       </p>
-                      <div className="flex gap-1">
+
+                      {/* Action Buttons with RBAC */}
+                      <div className="flex gap-1 flex-wrap">
+                        {/* View/Hide - Everyone */}
                         <Button
                           size="sm"
                           variant="ghost"
                           className="h-7 px-1 text-[10px] text-muted-foreground"
                           onClick={() => onToggleLayer(result.id)}
+                          disabled={!canView}
                         >
                           <Eye
                             className={`h-3 w-3 mr-1 ${
@@ -524,45 +548,66 @@ export function MapSidebar({
                           />
                           {isActive ? "Hide" : "View"}
                         </Button>
+
+                        {/* Chart - Registered and above */}
                         <Button
                           size="sm"
                           variant="ghost"
                           className="h-7 px-2 text-[10px] text-muted-foreground"
-                          onClick={() => onChart(result.id)}
+                          onClick={() => {
+                            if (!canChart) {
+                              alert("Please sign in to access charts");
+                              return;
+                            }
+                            onChart(result.id);
+                          }}
                         >
                           <BarChart3
                             className={`h-3 w-3 mr-1 ${
-                              isActive
+                              canChart && isActive
                                 ? "text-primary"
                                 : "text-muted-foreground"
                             }`}
                           />
                           Chart
                         </Button>
+
+                        {/* Request - Registered and above */}
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="h-7 px- text-[10px] text-muted-foreground"
-                          onClick={() => onRequest(result.id)}
-                          disabled={!canDownloadOrRequest}
+                          className="h-7 px-2 text-[10px] text-muted-foreground"
+                          onClick={() => {
+                            if (!canRequest) {
+                              alert(
+                                "Please sign in to submit download requests",
+                              );
+                              return;
+                            }
+                            onRequest(result.id);
+                          }}
                         >
                           <FileText className="h-3 w-3 mr-1" /> Request
                         </Button>
+
+                        {/* Download - Admin only */}
                         <Button
                           size="sm"
                           variant="ghost"
                           className="h-7 px-2 text-[10px] text-primary"
-                          onClick={() => onDownload(result.id)}
-                          disabled={!canDownloadOrRequest}
+                          onClick={() => {
+                            if (!canDownload) {
+                              alert(
+                                "Direct download requires admin privileges. Please use Request to submit a download request.",
+                              );
+                              return;
+                            }
+                            onDownload(result.id);
+                          }}
                         >
                           <Download className="h-3 w-3" />
                         </Button>
                       </div>
-                      {!canDownloadOrRequest && (
-                        <p className="mt-2 text-[10px] text-amber-600">
-                          Sign in to request or download this dataset.
-                        </p>
-                      )}
                     </div>
                   );
                 })}

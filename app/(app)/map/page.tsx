@@ -17,7 +17,7 @@ export default function MapExplorerPage() {
   }
 
   return (
-    <div className="p-6 max-w-[90%] mx-auto">
+    <div className="p-6 max-w-[90%] h-[80vh] mx-auto">
       <MapSelector userRole={userRole} />
     </div>
   );

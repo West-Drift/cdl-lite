@@ -83,17 +83,17 @@ export function MapSelector({ userRole }: MapSelectorProps) {
             value={activeTab}
             onValueChange={(v) => setActiveTab(v as "map" | "custom")}
           >
-            <TabsList className="grid w-full grid-cols-2 mb-6 bg-input-background border border-border p-0.5 rounded-xl">
+            <TabsList className="grid w-full grid-cols-2 mb-4 bg-input-background border border-border p-0.5 rounded-xl">
               <TabsTrigger
                 value="map"
-                className="data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=inactive]:hover:bg-muted data-[state=inactive]:text-muted-foreground"
+                className="data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=inactive]:bg-primary/10 data-[state=inactive]:hover:bg-muted data-[state=inactive]:text-muted-foreground"
               >
                 <MapPin className="size-4 mr-2" />
                 Select from Map
               </TabsTrigger>
               <TabsTrigger
                 value="custom"
-                className="data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=inactive]:hover:bg-muted data-[state=inactive]:text-muted-foreground"
+                className="data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=inactive]:bg-primary/10 data-[state=inactive]:hover:bg-muted data-[state=inactive]:text-muted-foreground"
               >
                 <Upload className="size-4 mr-2" />
                 Upload Custom Boundary
@@ -177,7 +177,7 @@ export function MapSelector({ userRole }: MapSelectorProps) {
                               variant="ghost"
                               size="icon"
                               onClick={removeFile}
-                              className="flex-shrink-0"
+                              className="shrink-0"
                             >
                               <X className="size-4" />
                             </Button>
@@ -228,7 +228,7 @@ export function MapSelector({ userRole }: MapSelectorProps) {
                   </div>
 
                   <div className="bg-muted rounded-lg p-4 space-y-3">
-                    <h4 className="text-sm text-foreground">
+                    <h4 className="text-sm text-accent">
                       Custom Request Process
                     </h4>
                     <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
