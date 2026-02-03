@@ -5,6 +5,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Button } from "./ui/button";
 import { MapSidebar } from "./MapSidebar";
+import { ChartPanel } from "./ChartPanel";
 import {
   ZoomIn,
   ZoomOut,
@@ -78,6 +79,10 @@ export function MapCanvas() {
   const [results, setResults] = useState<ResultItem[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [activeLayerIds, setActiveLayerIds] = useState<string[]>([]);
+
+  // Chart state
+  const [activeChartId, setActiveChartId] = useState<string | null>(null);
+  const [activeChartName, setActiveChartName] = useState<string>("");
 
   // Map setup
   useEffect(() => {
@@ -354,8 +359,17 @@ export function MapCanvas() {
       alert("Please sign in to view charts");
       return;
     }
-    // TODO: Implement chart visualization
-    alert(`Opening chart for dataset: ${id}`);
+    // Find the result to get its name
+    const result = results.find((r) => r.id === id);
+    const chartName = result ? result.name : "Dataset Chart";
+
+    setActiveChartId(id);
+    setActiveChartName(chartName);
+  }
+
+  function handleCloseChart() {
+    setActiveChartId(null);
+    setActiveChartName("");
   }
 
   const [searchTerm, setSearchTerm] = useState<string>("");
@@ -562,6 +576,15 @@ export function MapCanvas() {
             <ZoomOut className="h-3 w-3" />
           </Button>
         </div>
+
+        {/* Chart Panel - Bottom Left */}
+        {activeChartId && (
+          <ChartPanel
+            datasetId={activeChartId}
+            datasetName={activeChartName}
+            onClose={handleCloseChart}
+          />
+        )}
       </div>
     </div>
   );
