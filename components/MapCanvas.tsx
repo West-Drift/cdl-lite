@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Button } from "./ui/button";
@@ -19,12 +19,18 @@ import {
 import { useAuth } from "@/components/AuthProvider";
 
 type UserRole = "public" | "registered" | "verified" | "admin";
-
 type SidebarMode = "search" | "results";
-
 type BaseLayer = "map" | "satellite";
-
 type SelectionMode = null | "rectangle" | "click";
+export type BoundaryMode = "GADM" | "TAMSAT" | "SHAMBA";
+
+// Which boundary mode each dataset_type uses
+const BOUNDARY_MODE_FOR_DATASET: Record<string, BoundaryMode> = {
+  ndvi_ward: "GADM",
+  rainfall_chirps: "GADM",
+  ndvi_grid: "TAMSAT",
+  ndvi_farm: "SHAMBA",
+};
 
 interface BoundaryLevelOption {
   id: string;
@@ -32,23 +38,25 @@ interface BoundaryLevelOption {
 }
 
 interface ResultItem {
-  id: string;
+  id: string; // dataset_type key e.g. "ndvi_ward"
   name: string;
   type: string;
   category: string;
   size: string;
+  boundaryType: BoundaryMode;
 }
 
 export function MapCanvas() {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const currentTileLayerRef = useRef<L.TileLayer | null>(null);
+  const geojsonLayerRef = useRef<L.GeoJSON | null>(null);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [mode, setMode] = useState<SidebarMode>("search");
   const [isSearching, setIsSearching] = useState(false);
 
-  // Map tools state
+  // Map tool toggles
   const [isLayerToolExpanded, setIsLayerToolExpanded] = useState(false);
   const [isBoundaryToolExpanded, setIsBoundaryToolExpanded] = useState(false);
   const [baseLayer, setBaseLayer] = useState<BaseLayer>("satellite");
@@ -57,23 +65,32 @@ export function MapCanvas() {
   const { user } = useAuth();
   const userRole = (user?.role ?? "public") as UserRole;
 
-  // Boundary selections
+  // ---------- Boundary selections (GADM cascade) ----------
   const [country, setCountry] = useState<string | null>(null);
   const [admin1, setAdmin1] = useState<string | null>(null);
   const [admin2, setAdmin2] = useState<string | null>(null);
   const [admin3, setAdmin3] = useState<string | null>(null);
-  const [admin4, setAdmin4] = useState<string | null>(null);
 
-  // Options – currently mocked, later from DB
-  const [countries, setCountries] = useState<BoundaryLevelOption[]>([
-    { id: "ke", name: "Kenya" },
-    { id: "tz", name: "Tanzania" },
-    { id: "ug", name: "Uganda" },
+  // Lifted from MapSidebar so MapCanvas reacts to it
+  const [boundaryMode, setBoundaryMode] = useState<BoundaryMode>("GADM");
+
+  // Date range lifted from MapSidebar so ChartPanel can consume it
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(
+    new Date(2020, 0, 1),
+  );
+  const [dateUntil, setDateUntil] = useState<Date | undefined>(
+    new Date(2024, 11, 31),
+  );
+
+  // Dropdown options
+  const [countries] = useState<BoundaryLevelOption[]>([
+    { id: "KEN", name: "Kenya" },
+    { id: "TZA", name: "Tanzania" },
+    { id: "ZMB", name: "Zambia" },
   ]);
   const [admin1Options, setAdmin1Options] = useState<BoundaryLevelOption[]>([]);
   const [admin2Options, setAdmin2Options] = useState<BoundaryLevelOption[]>([]);
   const [admin3Options, setAdmin3Options] = useState<BoundaryLevelOption[]>([]);
-  const [admin4Options, setAdmin4Options] = useState<BoundaryLevelOption[]>([]);
 
   // Results + RBAC
   const [results, setResults] = useState<ResultItem[]>([]);
@@ -83,8 +100,12 @@ export function MapCanvas() {
   // Chart state
   const [activeChartId, setActiveChartId] = useState<string | null>(null);
   const [activeChartName, setActiveChartName] = useState<string>("");
+  const [activeChartLocationId, setActiveChartLocationId] =
+    useState<string>("");
 
-  // Map setup
+  const [searchTerm, setSearchTerm] = useState<string>("");
+
+  // ---------- Map init ----------
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
 
@@ -95,10 +116,7 @@ export function MapCanvas() {
 
     const satelliteTileLayer = L.tileLayer(
       "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-      {
-        attribution: "© Acre Africa © Google Maps",
-        maxZoom: 20,
-      },
+      { attribution: "© Acre Africa © Google Maps", maxZoom: 20 },
     ).addTo(map);
 
     currentTileLayerRef.current = satelliteTileLayer;
@@ -112,114 +130,260 @@ export function MapCanvas() {
     };
   }, []);
 
-  // Invalidate map size when sidebar toggles
+  // Resize after sidebar transition
   useEffect(() => {
     if (mapInstanceRef.current) {
-      // Wait for CSS transition to complete (300ms from transition-all duration-300)
-      const timer = setTimeout(() => {
-        mapInstanceRef.current?.invalidateSize();
-      }, 350);
-
-      return () => clearTimeout(timer);
+      const t = setTimeout(() => mapInstanceRef.current?.invalidateSize(), 350);
+      return () => clearTimeout(t);
     }
   }, [isSidebarOpen]);
 
-  // Handle base layer switching
+  // ---------- Base layer ----------
   function handleBaseLayerChange(layer: BaseLayer) {
     if (!mapInstanceRef.current || !currentTileLayerRef.current) return;
-
     const map = mapInstanceRef.current;
-
-    // Remove current tile layer
     map.removeLayer(currentTileLayerRef.current);
-
-    // Add new tile layer
-    let newTileLayer: L.TileLayer;
-    if (layer === "map") {
-      newTileLayer = L.tileLayer(
-        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        {
-          attribution: "© OpenStreetMap contributors",
-          maxZoom: 19,
-        },
-      ).addTo(map);
-    } else {
-      newTileLayer = L.tileLayer(
-        "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-        {
-          attribution: "© Acre Africa © Google Maps",
-          maxZoom: 20,
-        },
-      ).addTo(map);
-    }
-
-    currentTileLayerRef.current = newTileLayer;
+    const next =
+      layer === "map"
+        ? L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            attribution: "© OpenStreetMap contributors",
+            maxZoom: 19,
+          }).addTo(map)
+        : L.tileLayer("https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", {
+            attribution: "© Acre Africa © Google Maps",
+            maxZoom: 20,
+          }).addTo(map);
+    currentTileLayerRef.current = next;
     setBaseLayer(layer);
   }
 
-  // Handle selection mode changes
   function handleSelectionModeChange(newMode: SelectionMode) {
     setSelectionMode(newMode);
-    // TODO: Enable/disable drawing tools on map based on mode
-    if (newMode === "rectangle") {
-      console.log("Rectangle selection mode activated");
-    } else if (newMode === "click") {
-      console.log("Click selection mode activated");
-    } else {
-      console.log("Selection mode deactivated");
+  }
+
+  // ---------- Layer helpers ----------
+  function clearBoundaryLayers() {
+    if (geojsonLayerRef.current && mapInstanceRef.current) {
+      mapInstanceRef.current.removeLayer(geojsonLayerRef.current);
+      geojsonLayerRef.current = null;
     }
   }
 
-  // Helpers to show a polygon on map (mocked)
-  function showGeometryOnMap(label: string) {
-    if (!mapInstanceRef.current) return;
-    const map = mapInstanceRef.current;
+  /** Open chart for a clicked feature */
+  function openChartForFeature(
+    featureProps: Record<string, string>,
+    mode: BoundaryMode,
+    currentResults: ResultItem[],
+  ) {
+    // Prefer a result matching this boundary mode, fallback to sensible default
+    const match = currentResults.find(
+      (r) => BOUNDARY_MODE_FOR_DATASET[r.id] === mode,
+    );
+    const chartId =
+      match?.id ??
+      (mode === "TAMSAT"
+        ? "ndvi_grid"
+        : mode === "SHAMBA"
+          ? "ndvi_farm"
+          : "ndvi_ward");
+    const chartName = match?.name ?? chartId;
+    // Use the location_id property set by the API (name-based for GADM, farm_id for SHAMBA, grid_id for TAMSAT)
+    const locationId = featureProps.location_id ?? featureProps.id ?? "";
 
-    // Mock: just fly to a fixed bbox depending on label.
-    if (label.startsWith("ke")) {
-      map.flyTo([-1.2921, 36.8219], 7); // Kenya
-    } else if (label.startsWith("tz")) {
-      map.flyTo([-6.7924, 39.2083], 7); // Tanzania
-    } else if (label.startsWith("ug")) {
-      map.flyTo([0.3476, 32.5825], 7); // Uganda
-    }
-    // TODO: replace with real geometry: add/remove L.GeoJSON layers per id
+    setActiveChartId(chartId);
+    setActiveChartName(chartName);
+    setActiveChartLocationId(locationId);
   }
 
-  // Cascading boundary level handlers (mocked, ready for DB)
+  /** Render a GeoJSON layer with click-to-chart interaction */
+  function renderGeoJSON(
+    geojson: GeoJSON.FeatureCollection,
+    styleOpts: L.PathOptions,
+    mode: BoundaryMode,
+    currentResults: ResultItem[],
+  ) {
+    if (!mapInstanceRef.current || !geojson?.features?.length) return;
+
+    const layer = L.geoJSON(geojson, {
+      style: styleOpts,
+      onEachFeature: (feature, featureLayer) => {
+        const props = (feature.properties ?? {}) as Record<string, string>;
+        featureLayer.bindTooltip(props.name ?? props.id ?? "", {
+          permanent: false,
+          direction: "top",
+        });
+
+        featureLayer.on("click", () => {
+          (featureLayer as L.Path).setStyle({
+            fillOpacity: 0.45,
+            weight: 3,
+            color: "#F59E0B",
+          });
+          openChartForFeature(props, mode, currentResults);
+        });
+        featureLayer.on("mouseout", () =>
+          layer.resetStyle(featureLayer as L.Path),
+        );
+      },
+    }).addTo(mapInstanceRef.current!);
+
+    geojsonLayerRef.current = layer;
+    mapInstanceRef.current!.fitBounds(layer.getBounds());
+  }
+
+  // ---------- Core boundary loaders ----------
+
+  /** GADM: load polygons one level deeper than current selection */
+  async function loadGadmLayer(
+    countryVal: string,
+    a1: string | null,
+    a2: string | null,
+    currentResults: ResultItem[],
+  ) {
+    clearBoundaryLayers();
+    const params: Record<string, string> = { country: countryVal };
+    if (a1) params.admin1 = a1;
+    if (a2) params.admin2 = a2;
+    const qs = new URLSearchParams(params).toString();
+
+    try {
+      const res = await fetch(`/api/boundaries/geojson?${qs}`);
+      if (!res.ok) throw new Error(res.statusText);
+      const geojson: GeoJSON.FeatureCollection = await res.json();
+      renderGeoJSON(
+        geojson,
+        {
+          color: "#3B82F6",
+          weight: 2,
+          fillColor: "#3B82F6",
+          fillOpacity: 0.15,
+        },
+        "GADM",
+        currentResults,
+      );
+    } catch (e) {
+      console.error("loadGadmLayer error:", e);
+    }
+  }
+
+  async function loadTamsatLayer(
+    countryVal: string,
+    a1: string | null,
+    a2: string | null,
+    currentResults: ResultItem[],
+  ) {
+    clearBoundaryLayers();
+    const params: Record<string, string> = {
+      mode: "TAMSAT",
+      country: countryVal,
+    };
+    if (a1) params.admin1 = a1;
+    if (a2) params.admin2 = a2;
+    const qs = new URLSearchParams(params).toString();
+
+    try {
+      const res = await fetch(`/api/boundaries/geojson?${qs}`);
+      if (!res.ok) throw new Error(res.statusText);
+      const geojson: GeoJSON.FeatureCollection = await res.json();
+      renderGeoJSON(
+        geojson,
+        { color: "#10B981", weight: 1, fillColor: "#10B981", fillOpacity: 0.1 },
+        "TAMSAT",
+        currentResults,
+      );
+    } catch (e) {
+      console.error("loadTamsatLayer error:", e);
+    }
+  }
+
+  async function loadShambaLayer(
+    countryVal: string,
+    a1: string | null,
+    a2: string | null,
+    a3: string | null,
+    currentResults: ResultItem[],
+  ) {
+    clearBoundaryLayers();
+    const params: Record<string, string> = {
+      mode: "SHAMBA",
+      country: countryVal,
+    };
+    if (a1) params.admin1 = a1;
+    if (a2) params.admin2 = a2;
+    if (a3) params.admin3 = a3;
+    const qs = new URLSearchParams(params).toString();
+
+    try {
+      const res = await fetch(`/api/boundaries/geojson?${qs}`);
+      if (!res.ok) throw new Error(res.statusText);
+      const geojson: GeoJSON.FeatureCollection = await res.json();
+      renderGeoJSON(
+        geojson,
+        {
+          color: "#F59E0B",
+          weight: 1.5,
+          fillColor: "#F59E0B",
+          fillOpacity: 0.15,
+        },
+        "SHAMBA",
+        currentResults,
+      );
+    } catch (e) {
+      console.error("loadShambaLayer error:", e);
+    }
+  }
+
+  /** Single entry-point — called whenever selection or mode changes */
+  async function refreshMap(
+    bMode: BoundaryMode,
+    c: string | null,
+    a1: string | null,
+    a2: string | null,
+    a3: string | null,
+    currentResults: ResultItem[],
+  ) {
+    if (!c) {
+      clearBoundaryLayers();
+      return;
+    }
+    if (bMode === "TAMSAT") {
+      await loadTamsatLayer(c, a1, a2, currentResults);
+      return;
+    }
+    if (bMode === "SHAMBA") {
+      await loadShambaLayer(c, a1, a2, a3, currentResults);
+      return;
+    }
+    await loadGadmLayer(c, a1, a2, currentResults);
+  }
+
+  // ---------- Boundary dropdown handlers ----------
   async function handleCountryChange(id: string) {
     const value = id || null;
     setCountry(value);
     setAdmin1(null);
     setAdmin2(null);
     setAdmin3(null);
-    setAdmin4(null);
+    setAdmin1Options([]);
+    setAdmin2Options([]);
+    setAdmin3Options([]);
 
     if (!value) {
-      setAdmin1Options([]);
-      setAdmin2Options([]);
-      setAdmin3Options([]);
-      setAdmin4Options([]);
+      clearBoundaryLayers();
       return;
     }
 
-    // TODO: fetch admin1 list from DB for this country
-    if (value === "ke") {
-      setAdmin1Options([
-        { id: "ke-nairobi", name: "Nairobi County" },
-        { id: "ke-mombasa", name: "Mombasa County" },
-      ]);
-    } else {
-      setAdmin1Options([
-        { id: `${value}-admin1-a`, name: "Admin1 A" },
-        { id: `${value}-admin1-b`, name: "Admin1 B" },
-      ]);
+    try {
+      const res = await fetch(
+        `/api/boundaries?mode=GADM&level=admin1&country=${value}`,
+      );
+      const { options } = await res.json();
+      setAdmin1Options(options ?? []);
+    } catch (e) {
+      console.error(e);
     }
-    setAdmin2Options([]);
-    setAdmin3Options([]);
-    setAdmin4Options([]);
 
-    showGeometryOnMap(value);
+    await refreshMap(boundaryMode, value, null, null, null, results);
   }
 
   async function handleAdmin1Change(id: string) {
@@ -227,113 +391,101 @@ export function MapCanvas() {
     setAdmin1(value);
     setAdmin2(null);
     setAdmin3(null);
-    setAdmin4(null);
+    setAdmin2Options([]);
+    setAdmin3Options([]);
 
     if (!value) {
-      setAdmin2Options([]);
-      setAdmin3Options([]);
-      setAdmin4Options([]);
+      await refreshMap(boundaryMode, country, null, null, null, results);
       return;
     }
 
-    // TODO: fetch admin2 list from DB for this admin1
-    setAdmin2Options([
-      { id: `${value}-sub1`, name: "Subregion 1" },
-      { id: `${value}-sub2`, name: "Subregion 2" },
-    ]);
-    setAdmin3Options([]);
-    setAdmin4Options([]);
+    try {
+      const res = await fetch(
+        `/api/boundaries?mode=GADM&level=admin2&country=${country}&admin1=${value}`,
+      );
+      const { options } = await res.json();
+      setAdmin2Options(options ?? []);
+    } catch (e) {
+      console.error(e);
+    }
 
-    showGeometryOnMap(value);
+    await refreshMap(boundaryMode, country, value, null, null, results);
   }
 
   async function handleAdmin2Change(id: string) {
     const value = id || null;
     setAdmin2(value);
     setAdmin3(null);
-    setAdmin4(null);
+    setAdmin3Options([]);
 
     if (!value) {
-      setAdmin3Options([]);
-      setAdmin4Options([]);
+      await refreshMap(boundaryMode, country, admin1, null, null, results);
       return;
     }
 
-    // TODO: fetch admin3 list from DB
-    setAdmin3Options([
-      { id: `${value}-subsub1`, name: "Sub-subregion 1" },
-      { id: `${value}-subsub2`, name: "Sub-subregion 2" },
-    ]);
-    setAdmin4Options([]);
+    try {
+      const res = await fetch(
+        `/api/boundaries?mode=GADM&level=admin3&country=${country}&admin1=${admin1}&admin2=${value}`,
+      );
+      const { options } = await res.json();
+      setAdmin3Options(options ?? []);
+    } catch (e) {
+      console.error(e);
+    }
 
-    showGeometryOnMap(value);
+    await refreshMap(boundaryMode, country, admin1, value, null, results);
   }
 
   async function handleAdmin3Change(id: string) {
     const value = id || null;
     setAdmin3(value);
-    setAdmin4(null);
-
-    if (!value) {
-      setAdmin4Options([]);
-      return;
-    }
-
-    // TODO: fetch admin4 list from DB
-    setAdmin4Options([
-      { id: `${value}-area1`, name: "Area 1" },
-      { id: `${value}-area2`, name: "Area 2" },
-    ]);
-
-    showGeometryOnMap(value);
+    await refreshMap(boundaryMode, country, admin1, admin2, value, results);
   }
 
-  async function handleAdmin4Change(id: string) {
-    const value = id || null;
-    setAdmin4(value);
-
-    if (value) {
-      showGeometryOnMap(value);
-    }
+  async function handleBoundaryModeChange(newMode: BoundaryMode) {
+    setBoundaryMode(newMode);
+    await refreshMap(newMode, country, admin1, admin2, admin3, results);
   }
 
-  // Mock search results
+  // ---------- Search: real /api/datasets ----------
   async function handleSearch() {
     setIsSearching(true);
+    try {
+      const res = await fetch("/api/datasets");
+      const { datasets } = await res.json();
 
-    // Simulate search delay
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+      const mapped: ResultItem[] = (datasets ?? []).map(
+        (d: {
+          id: string;
+          name: string;
+          type: string;
+          category: string;
+          boundary_type: string;
+        }) => ({
+          id: d.id,
+          name: d.name,
+          type: d.type === "raster" ? "Raster" : "Tabular",
+          category: d.category,
+          size: "–",
+          boundaryType: (d.boundary_type as BoundaryMode) ?? "GADM",
+        }),
+      );
 
-    // Mock dataset names
-    const mockDatasets = [
-      "Precipitation Monthly (CHIRPS)",
-      "Temperature Daily (ERA5)",
-      "NDVI 16-day (MODIS)",
-      "Soil Moisture Weekly (SMAP)",
-      "Land Cover Annual (ESA CCI)",
-    ];
-
-    const mapped: ResultItem[] = mockDatasets.map((name, idx) => ({
-      id: `mock-${idx}`,
-      name,
-      type: "GeoTIFF",
-      category: "Climate",
-      size: "50 MB",
-    }));
-
-    setResults(mapped);
-    setTotalCount(mapped.length);
-    setActiveLayerIds([]);
-    setIsSearching(false);
-    setMode("results");
+      setResults(mapped);
+      setTotalCount(mapped.length);
+      setActiveLayerIds([]);
+      setMode("results");
+    } catch (e) {
+      console.error("handleSearch error:", e);
+    } finally {
+      setIsSearching(false);
+    }
   }
 
   function handleToggleLayer(id: string) {
     setActiveLayerIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
-
-    // TODO: add/remove corresponding Leaflet layer for this dataset
   }
 
   function handleDownload(id: string) {
@@ -341,7 +493,6 @@ export function MapCanvas() {
       alert("Access denied: Admin privileges required for direct download");
       return;
     }
-    // TODO: Call backend API with auth
     alert(`Download started for dataset: ${id}`);
   }
 
@@ -350,7 +501,6 @@ export function MapCanvas() {
       alert("Please sign in to submit download requests");
       return;
     }
-    // TODO: Call backend API to create download request
     alert(`Download request submitted for dataset: ${id}`);
   }
 
@@ -359,24 +509,25 @@ export function MapCanvas() {
       alert("Please sign in to view charts");
       return;
     }
-    // Find the result to get its name
     const result = results.find((r) => r.id === id);
-    const chartName = result ? result.name : "Dataset Chart";
+    const chartName = result?.name ?? "Dataset Chart";
+    // Use deepest selected GADM code as the location_id seed
+    const locationId = admin3 ?? admin2 ?? admin1 ?? country ?? "";
 
     setActiveChartId(id);
     setActiveChartName(chartName);
+    setActiveChartLocationId(locationId);
   }
 
   function handleCloseChart() {
     setActiveChartId(null);
     setActiveChartName("");
+    setActiveChartLocationId("");
   }
-
-  const [searchTerm, setSearchTerm] = useState<string>("");
 
   return (
     <div className="flex h-[80vh] overflow-hidden">
-      {/* Sidebar with fixed width transition */}
+      {/* Sidebar */}
       <div
         className={`transition-all duration-300 shrink-0 ${
           isSidebarOpen ? "w-80" : "w-0"
@@ -393,17 +544,25 @@ export function MapCanvas() {
           admin1Options={admin1Options}
           admin2Options={admin2Options}
           admin3Options={admin3Options}
-          admin4Options={admin4Options}
+          admin4Options={[]}
           selectedCountry={country}
           selectedAdmin1={admin1}
           selectedAdmin2={admin2}
           selectedAdmin3={admin3}
-          selectedAdmin4={admin4}
+          selectedAdmin4={null}
           onCountryChange={handleCountryChange}
           onAdmin1Change={handleAdmin1Change}
           onAdmin2Change={handleAdmin2Change}
           onAdmin3Change={handleAdmin3Change}
-          onAdmin4Change={handleAdmin4Change}
+          onAdmin4Change={() => {}}
+          // Lifted state
+          dateFrom={dateFrom}
+          dateUntil={dateUntil}
+          onDateFromChange={setDateFrom}
+          onDateUntilChange={setDateUntil}
+          boundaryMode={boundaryMode}
+          onBoundaryModeChange={handleBoundaryModeChange}
+          // Results
           results={results}
           totalCount={totalCount}
           activeLayerIds={activeLayerIds}
@@ -416,13 +575,12 @@ export function MapCanvas() {
         />
       </div>
 
-      {/* Map Area - Takes remaining space */}
+      {/* Map Area */}
       <div className="relative flex-1 h-[80vh]">
         <div ref={mapRef} className="w-full h-[80vh]" />
 
-        {/* Top Right Tools Container */}
+        {/* Top Right Tools */}
         <div className="absolute top-4 right-4 z-1000 flex flex-col gap-2 items-end">
-          {/* Search Bar */}
           <input
             type="text"
             placeholder="Search locations on map..."
@@ -431,7 +589,7 @@ export function MapCanvas() {
             className="w-[280px] px-4 py-2 border border-border rounded-3xl bg-input-background focus:outline-none focus:ring-2 focus:ring-primary placeholder:text-muted-foreground text-sm"
           />
 
-          {/* Map Layer Toggle Tool */}
+          {/* Base Layer Toggle */}
           <div className="flex items-center gap-1 bg-card border border-border rounded-md shadow-sm">
             {isLayerToolExpanded && (
               <>
@@ -522,9 +680,7 @@ export function MapCanvas() {
               variant="ghost"
               onClick={() => {
                 setIsBoundaryToolExpanded(!isBoundaryToolExpanded);
-                if (isBoundaryToolExpanded) {
-                  handleSelectionModeChange(null);
-                }
+                if (isBoundaryToolExpanded) handleSelectionModeChange(null);
               }}
               className={`h-8 w-8 ${
                 isBoundaryToolExpanded
@@ -537,7 +693,7 @@ export function MapCanvas() {
           </div>
         </div>
 
-        {/* Toggle Sidebar Button - Only shows when sidebar is collapsed */}
+        {/* Toggle Sidebar Button */}
         {!isSidebarOpen && (
           <Button
             variant="ghost"
@@ -577,11 +733,14 @@ export function MapCanvas() {
           </Button>
         </div>
 
-        {/* Chart Panel - Bottom Left */}
+        {/* Chart Panel */}
         {activeChartId && (
           <ChartPanel
             datasetId={activeChartId}
             datasetName={activeChartName}
+            locationId={activeChartLocationId}
+            startDate={dateFrom?.toISOString().split("T")[0]}
+            endDate={dateUntil?.toISOString().split("T")[0]}
             onClose={handleCloseChart}
           />
         )}
