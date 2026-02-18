@@ -37,13 +37,25 @@ interface BoundaryLevelOption {
   name: string;
 }
 
+interface DatasetItem {
+  id: string;
+  name: string;
+  category: string;
+  subcategory: string;
+  sensor: string | null;
+  type: string;
+  boundary_type: string;
+}
+
 interface ResultItem {
   id: string; // dataset_type key e.g. "ndvi_ward"
   name: string;
   type: string;
   category: string;
-  size: string;
+  subcategory: string;
+  sensor: string | null;
   boundaryType: BoundaryMode;
+  size: string;
 }
 
 export function MapCanvas() {
@@ -91,6 +103,11 @@ export function MapCanvas() {
   const [admin1Options, setAdmin1Options] = useState<BoundaryLevelOption[]>([]);
   const [admin2Options, setAdmin2Options] = useState<BoundaryLevelOption[]>([]);
   const [admin3Options, setAdmin3Options] = useState<BoundaryLevelOption[]>([]);
+
+  // All datasets from DB (drives sidebar tree)
+  const [allDatasets, setAllDatasets] = useState<DatasetItem[]>([]);
+  // IDs the user has checked in the tree (drives polygon-click chart default)
+  const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[]>([]);
 
   // Results + RBAC
   const [results, setResults] = useState<ResultItem[]>([]);
@@ -169,29 +186,39 @@ export function MapCanvas() {
     }
   }
 
-  /** Open chart for a clicked feature */
+  /** Open chart for a clicked feature.
+   *  Picks the first *checked* dataset matching this boundary mode.
+   *  Falls back to the sensible default per mode if nothing is checked.
+   */
   function openChartForFeature(
     featureProps: Record<string, string>,
     mode: BoundaryMode,
-    currentResults: ResultItem[],
+    currentDatasets: DatasetItem[],
+    checkedIds: string[],
   ) {
-    // Prefer a result matching this boundary mode, fallback to sensible default
-    const match = currentResults.find(
-      (r) => BOUNDARY_MODE_FOR_DATASET[r.id] === mode,
+    const locationId = featureProps.location_id ?? featureProps.id ?? "";
+
+    // Find first checked dataset that matches this boundary mode
+    const match = currentDatasets.find(
+      (d) => checkedIds.includes(d.id) && d.boundary_type === mode,
     );
-    const chartId =
-      match?.id ??
-      (mode === "TAMSAT"
+
+    // Fallback defaults per mode (guaranteed to have data)
+    const fallbackId =
+      mode === "TAMSAT"
         ? "ndvi_grid"
         : mode === "SHAMBA"
           ? "ndvi_farm"
-          : "ndvi_ward");
-    const chartName = match?.name ?? chartId;
-    // Use the location_id property set by the API (name-based for GADM, farm_id for SHAMBA, grid_id for TAMSAT)
-    const locationId = featureProps.location_id ?? featureProps.id ?? "";
+          : "ndvi_ward";
+    const fallbackName =
+      mode === "TAMSAT"
+        ? "NDVI - TAMSAT Grid"
+        : mode === "SHAMBA"
+          ? "NDVI - Farm Level"
+          : "NDVI - Ward Level";
 
-    setActiveChartId(chartId);
-    setActiveChartName(chartName);
+    setActiveChartId(match?.id ?? fallbackId);
+    setActiveChartName(match?.name ?? fallbackName);
     setActiveChartLocationId(locationId);
   }
 
@@ -200,7 +227,8 @@ export function MapCanvas() {
     geojson: GeoJSON.FeatureCollection,
     styleOpts: L.PathOptions,
     mode: BoundaryMode,
-    currentResults: ResultItem[],
+    currentDatasets: DatasetItem[],
+    checkedIds: string[],
   ) {
     if (!mapInstanceRef.current || !geojson?.features?.length) return;
 
@@ -219,7 +247,7 @@ export function MapCanvas() {
             weight: 3,
             color: "#F59E0B",
           });
-          openChartForFeature(props, mode, currentResults);
+          openChartForFeature(props, mode, currentDatasets, checkedIds);
         });
         featureLayer.on("mouseout", () =>
           layer.resetStyle(featureLayer as L.Path),
@@ -238,7 +266,8 @@ export function MapCanvas() {
     countryVal: string,
     a1: string | null,
     a2: string | null,
-    currentResults: ResultItem[],
+    datasets: DatasetItem[],
+    checkedIds: string[],
   ) {
     clearBoundaryLayers();
     const params: Record<string, string> = { country: countryVal };
@@ -259,7 +288,8 @@ export function MapCanvas() {
           fillOpacity: 0.15,
         },
         "GADM",
-        currentResults,
+        datasets,
+        checkedIds,
       );
     } catch (e) {
       console.error("loadGadmLayer error:", e);
@@ -270,7 +300,8 @@ export function MapCanvas() {
     countryVal: string,
     a1: string | null,
     a2: string | null,
-    currentResults: ResultItem[],
+    datasets: DatasetItem[],
+    checkedIds: string[],
   ) {
     clearBoundaryLayers();
     const params: Record<string, string> = {
@@ -289,7 +320,8 @@ export function MapCanvas() {
         geojson,
         { color: "#10B981", weight: 1, fillColor: "#10B981", fillOpacity: 0.1 },
         "TAMSAT",
-        currentResults,
+        datasets,
+        checkedIds,
       );
     } catch (e) {
       console.error("loadTamsatLayer error:", e);
@@ -301,7 +333,8 @@ export function MapCanvas() {
     a1: string | null,
     a2: string | null,
     a3: string | null,
-    currentResults: ResultItem[],
+    datasets: DatasetItem[],
+    checkedIds: string[],
   ) {
     clearBoundaryLayers();
     const params: Record<string, string> = {
@@ -326,7 +359,8 @@ export function MapCanvas() {
           fillOpacity: 0.15,
         },
         "SHAMBA",
-        currentResults,
+        datasets,
+        checkedIds,
       );
     } catch (e) {
       console.error("loadShambaLayer error:", e);
@@ -340,21 +374,22 @@ export function MapCanvas() {
     a1: string | null,
     a2: string | null,
     a3: string | null,
-    currentResults: ResultItem[],
+    datasets: DatasetItem[],
+    checkedIds: string[],
   ) {
     if (!c) {
       clearBoundaryLayers();
       return;
     }
     if (bMode === "TAMSAT") {
-      await loadTamsatLayer(c, a1, a2, currentResults);
+      await loadTamsatLayer(c, a1, a2, datasets, checkedIds);
       return;
     }
     if (bMode === "SHAMBA") {
-      await loadShambaLayer(c, a1, a2, a3, currentResults);
+      await loadShambaLayer(c, a1, a2, a3, datasets, checkedIds);
       return;
     }
-    await loadGadmLayer(c, a1, a2, currentResults);
+    await loadGadmLayer(c, a1, a2, datasets, checkedIds);
   }
 
   // ---------- Boundary dropdown handlers ----------
@@ -383,7 +418,15 @@ export function MapCanvas() {
       console.error(e);
     }
 
-    await refreshMap(boundaryMode, value, null, null, null, results);
+    await refreshMap(
+      boundaryMode,
+      value,
+      null,
+      null,
+      null,
+      allDatasets,
+      selectedDatasetIds,
+    );
   }
 
   async function handleAdmin1Change(id: string) {
@@ -395,7 +438,15 @@ export function MapCanvas() {
     setAdmin3Options([]);
 
     if (!value) {
-      await refreshMap(boundaryMode, country, null, null, null, results);
+      await refreshMap(
+        boundaryMode,
+        country,
+        null,
+        null,
+        null,
+        allDatasets,
+        selectedDatasetIds,
+      );
       return;
     }
 
@@ -409,7 +460,15 @@ export function MapCanvas() {
       console.error(e);
     }
 
-    await refreshMap(boundaryMode, country, value, null, null, results);
+    await refreshMap(
+      boundaryMode,
+      country,
+      value,
+      null,
+      null,
+      allDatasets,
+      selectedDatasetIds,
+    );
   }
 
   async function handleAdmin2Change(id: string) {
@@ -419,7 +478,15 @@ export function MapCanvas() {
     setAdmin3Options([]);
 
     if (!value) {
-      await refreshMap(boundaryMode, country, admin1, null, null, results);
+      await refreshMap(
+        boundaryMode,
+        country,
+        admin1,
+        null,
+        null,
+        allDatasets,
+        selectedDatasetIds,
+      );
       return;
     }
 
@@ -433,18 +500,42 @@ export function MapCanvas() {
       console.error(e);
     }
 
-    await refreshMap(boundaryMode, country, admin1, value, null, results);
+    await refreshMap(
+      boundaryMode,
+      country,
+      admin1,
+      value,
+      null,
+      allDatasets,
+      selectedDatasetIds,
+    );
   }
 
   async function handleAdmin3Change(id: string) {
     const value = id || null;
     setAdmin3(value);
-    await refreshMap(boundaryMode, country, admin1, admin2, value, results);
+    await refreshMap(
+      boundaryMode,
+      country,
+      admin1,
+      admin2,
+      value,
+      allDatasets,
+      selectedDatasetIds,
+    );
   }
 
   async function handleBoundaryModeChange(newMode: BoundaryMode) {
     setBoundaryMode(newMode);
-    await refreshMap(newMode, country, admin1, admin2, admin3, results);
+    await refreshMap(
+      newMode,
+      country,
+      admin1,
+      admin2,
+      admin3,
+      allDatasets,
+      selectedDatasetIds,
+    );
   }
 
   // ---------- Search: real /api/datasets ----------
@@ -454,22 +545,28 @@ export function MapCanvas() {
       const res = await fetch("/api/datasets");
       const { datasets } = await res.json();
 
-      const mapped: ResultItem[] = (datasets ?? []).map(
-        (d: {
-          id: string;
-          name: string;
-          type: string;
-          category: string;
-          boundary_type: string;
-        }) => ({
-          id: d.id,
-          name: d.name,
-          type: d.type === "raster" ? "Raster" : "Tabular",
-          category: d.category,
-          size: "–",
-          boundaryType: (d.boundary_type as BoundaryMode) ?? "GADM",
-        }),
-      );
+      const rows: DatasetItem[] = datasets ?? [];
+
+      // Populate the full dataset list (drives sidebar tree)
+      setAllDatasets(rows);
+
+      // Auto-select ndvi_ward by default if nothing already checked
+      setSelectedDatasetIds((prev) => {
+        if (prev.length > 0) return prev;
+        const def = rows.find((d) => d.id === "ndvi_ward");
+        return def ? [def.id] : rows.length > 0 ? [rows[0].id] : [];
+      });
+
+      const mapped: ResultItem[] = rows.map((d) => ({
+        id: d.id,
+        name: d.name,
+        type: d.type === "raster" ? "Raster" : "Tabular",
+        category: d.category,
+        subcategory: d.subcategory,
+        sensor: d.sensor,
+        boundaryType: (d.boundary_type as BoundaryMode) ?? "GADM",
+        size: "–",
+      }));
 
       setResults(mapped);
       setTotalCount(mapped.length);
@@ -562,6 +659,10 @@ export function MapCanvas() {
           onDateUntilChange={setDateUntil}
           boundaryMode={boundaryMode}
           onBoundaryModeChange={handleBoundaryModeChange}
+          // Dataset tree
+          allDatasets={allDatasets}
+          selectedDatasetIds={selectedDatasetIds}
+          onDatasetSelectionChange={setSelectedDatasetIds}
           // Results
           results={results}
           totalCount={totalCount}

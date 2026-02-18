@@ -48,7 +48,21 @@ interface ResultItem {
   name: string;
   type: string;
   category: string;
+  subcategory: string;
+  sensor: string | null;
+  boundaryType: string;
   size: string;
+}
+
+// Full dataset descriptor returned by /api/datasets
+interface DatasetItem {
+  id: string;
+  name: string;
+  category: string;
+  subcategory: string;
+  sensor: string | null;
+  type: string;
+  boundary_type: string;
 }
 
 interface MapSidebarProps {
@@ -90,6 +104,11 @@ interface MapSidebarProps {
   onDateUntilChange: (d: Date | undefined) => void;
   boundaryMode: BoundaryMode;
   onBoundaryModeChange: (mode: BoundaryMode) => void;
+
+  // Dataset selection (lifted — drives polygon-click chart default)
+  allDatasets: DatasetItem[];
+  selectedDatasetIds: string[];
+  onDatasetSelectionChange: (ids: string[]) => void;
 
   isSidebarOpen: boolean;
   onToggleSidebar: () => void;
@@ -133,6 +152,10 @@ export function MapSidebar({
   boundaryMode,
   onBoundaryModeChange,
 
+  allDatasets,
+  selectedDatasetIds,
+  onDatasetSelectionChange,
+
   isSidebarOpen,
   onToggleSidebar,
 }: MapSidebarProps) {
@@ -145,31 +168,82 @@ export function MapSidebar({
     null,
   );
 
-  // Expandable data sources
-  const [expandedFilters, setExpandedFilters] = useState<string[]>([]);
+  // Expanded category / subcategory accordion nodes
+  const [expandedNodes, setExpandedNodes] = useState<string[]>(["vegetation"]);
 
-  const dataSources = [
-    {
-      id: "climate",
-      name: "Climate",
-      subcategories: ["Precipitation", "Temperature", "Humidity"],
-    },
-    {
-      id: "land",
-      name: "Land Use",
-      subcategories: ["NDVI", "LAI", "Land Cover"],
-    },
-    {
-      id: "hydrology",
-      name: "Hydrology",
-      subcategories: ["Soil Moisture", "Evapotranspiration"],
-    },
-  ];
-
-  const toggleFilter = (id: string) => {
-    setExpandedFilters((prev) =>
-      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
+  const toggleNode = (key: string) =>
+    setExpandedNodes((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
     );
+
+  // Category display labels
+  const CATEGORY_LABELS: Record<string, string> = {
+    vegetation: "🌿 Vegetation",
+    climate: "🌦️ Climate",
+    hydrology: "💧 Hydrology",
+    land: "🗺️ Land",
+  };
+
+  const SUBCATEGORY_LABELS: Record<string, string> = {
+    ndvi: "NDVI",
+    lai: "LAI",
+    bai: "BAI",
+    rainfall: "Rainfall",
+    lst: "LST",
+    wind: "Wind",
+    soil_moisture: "Soil Moisture",
+    et: "Evapotranspiration",
+    land_cover: "Land Cover",
+    soil_map: "Soil Map",
+  };
+
+  // Group allDatasets into category → subcategory → datasets[]
+  const grouped = allDatasets.reduce<
+    Record<string, Record<string, DatasetItem[]>>
+  >((acc, ds) => {
+    const cat = ds.category;
+    const sub = ds.subcategory;
+    if (!acc[cat]) acc[cat] = {};
+    if (!acc[cat][sub]) acc[cat][sub] = [];
+    acc[cat][sub].push(ds);
+    return acc;
+  }, {});
+
+  // Checkbox helpers
+  const toggleDataset = (id: string) => {
+    const next = selectedDatasetIds.includes(id)
+      ? selectedDatasetIds.filter((x) => x !== id)
+      : [...selectedDatasetIds, id];
+    onDatasetSelectionChange(next);
+  };
+
+  const toggleSubcategory = (datasets: DatasetItem[]) => {
+    const ids = datasets.map((d) => d.id);
+    const allChecked = ids.every((id) => selectedDatasetIds.includes(id));
+    const next = allChecked
+      ? selectedDatasetIds.filter((id) => !ids.includes(id))
+      : [...new Set([...selectedDatasetIds, ...ids])];
+    onDatasetSelectionChange(next);
+  };
+
+  const toggleCategory = (datasets: DatasetItem[]) => {
+    const ids = datasets.map((d) => d.id);
+    const allChecked = ids.every((id) => selectedDatasetIds.includes(id));
+    const next = allChecked
+      ? selectedDatasetIds.filter((id) => !ids.includes(id))
+      : [...new Set([...selectedDatasetIds, ...ids])];
+    onDatasetSelectionChange(next);
+  };
+
+  const subcategoryCheckedState = (
+    datasets: DatasetItem[],
+  ): "all" | "some" | "none" => {
+    const checked = datasets.filter((d) =>
+      selectedDatasetIds.includes(d.id),
+    ).length;
+    if (checked === datasets.length) return "all";
+    if (checked > 0) return "some";
+    return "none";
   };
 
   // RBAC
@@ -234,7 +308,7 @@ export function MapSidebar({
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <span className="text-xs font-semibold text-primary min-w-12 text-center">
+          <span className="text-xs font-semibold text-primary min-w-[48px] text-center">
             {year}
           </span>
           <button
@@ -353,7 +427,7 @@ export function MapSidebar({
       {mode === "search" ? (
         <>
           <div className="flex-1 overflow-y-auto p-4 border border-border rounded-lg mt-4 space-y-4">
-            {/* Data Sources */}
+            {/* Data Sources — nested tree from DB */}
             <div className="overflow-hidden">
               <Accordion type="multiple" defaultValue={["sources"]}>
                 <AccordionItem value="sources" className="border-none">
@@ -367,54 +441,120 @@ export function MapSidebar({
                       <span>Data Sources</span>
                     </Button>
                   </AccordionTrigger>
-                  <AccordionContent className="px-4 pb-4 pt-3 space-y-3">
-                    {dataSources.map((source) => (
-                      <div key={source.id} className="space-y-2">
-                        <div
-                          className="flex items-center justify-between cursor-pointer"
-                          onClick={() => toggleFilter(source.id)}
-                        >
-                          <span className="text-sm font-medium">
-                            {source.name}
-                          </span>
-                          <ChevronDown
-                            className={`h-4 w-4 transition-transform ${
-                              expandedFilters.includes(source.id)
-                                ? "rotate-180"
-                                : ""
-                            }`}
-                          />
-                        </div>
-                        {expandedFilters.includes(source.id) && (
-                          <div className="ml-4 space-y-1">
-                            {source.subcategories.map((sub) => (
-                              <div
-                                key={sub}
-                                className="flex items-center space-x-2"
-                              >
-                                <input
-                                  type="checkbox"
-                                  id={`${source.id}-${sub}`}
-                                  className="rounded border-border text-primary focus:ring-primary"
-                                />
-                                <Label
-                                  htmlFor={`${source.id}-${sub}`}
-                                  className="text-xs"
-                                >
-                                  {sub}
-                                </Label>
-                              </div>
-                            ))}
+                  <AccordionContent className="px-2 pb-4 pt-2 space-y-1">
+                    {Object.entries(grouped).map(([cat, subcats]) => {
+                      const catDatasets = Object.values(subcats).flat();
+                      const catState = subcategoryCheckedState(catDatasets);
+                      const catOpen = expandedNodes.includes(cat);
+                      return (
+                        <div key={cat} className="space-y-0.5">
+                          {/* Category row */}
+                          <div
+                            className="flex items-center gap-1.5 py-1 px-1 rounded hover:bg-accent/20 cursor-pointer select-none"
+                            onClick={() => toggleNode(cat)}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={catState === "all"}
+                              ref={(el) => {
+                                if (el) el.indeterminate = catState === "some";
+                              }}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                toggleCategory(catDatasets);
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="h-3.5 w-3.5 rounded accent-primary cursor-pointer"
+                            />
+                            <span className="text-xs font-semibold text-primary flex-1">
+                              {CATEGORY_LABELS[cat] ?? cat}
+                            </span>
+                            <ChevronDown
+                              className={`h-3 w-3 text-muted-foreground transition-transform ${catOpen ? "rotate-180" : ""}`}
+                            />
                           </div>
-                        )}
-                      </div>
-                    ))}
+
+                          {/* Subcategories */}
+                          {catOpen &&
+                            Object.entries(subcats).map(([sub, datasets]) => {
+                              const subState =
+                                subcategoryCheckedState(datasets);
+                              const subKey = `${cat}:${sub}`;
+                              const subOpen = expandedNodes.includes(subKey);
+                              return (
+                                <div key={sub} className="ml-3 space-y-0.5">
+                                  {/* Subcategory row */}
+                                  <div
+                                    className="flex items-center gap-1.5 py-0.5 px-1 rounded hover:bg-accent/10 cursor-pointer select-none"
+                                    onClick={() => toggleNode(subKey)}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={subState === "all"}
+                                      ref={(el) => {
+                                        if (el)
+                                          el.indeterminate =
+                                            subState === "some";
+                                      }}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        toggleSubcategory(datasets);
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="h-3 w-3 rounded accent-primary cursor-pointer"
+                                    />
+                                    <span className="text-[11px] font-medium text-primary/80 flex-1">
+                                      {SUBCATEGORY_LABELS[sub] ?? sub}
+                                    </span>
+                                    <ChevronDown
+                                      className={`h-3 w-3 text-muted-foreground/60 transition-transform ${subOpen ? "rotate-180" : ""}`}
+                                    />
+                                  </div>
+
+                                  {/* Individual datasets */}
+                                  {subOpen &&
+                                    datasets.map((ds) => (
+                                      <div
+                                        key={ds.id}
+                                        className="ml-4 flex items-start gap-1.5 py-0.5 px-1 rounded hover:bg-accent/10 cursor-pointer"
+                                        onClick={() => toggleDataset(ds.id)}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedDatasetIds.includes(
+                                            ds.id,
+                                          )}
+                                          onChange={() => toggleDataset(ds.id)}
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="h-3 w-3 mt-0.5 rounded accent-primary cursor-pointer"
+                                        />
+                                        <div className="flex-1 min-w-0">
+                                          <span className="text-[10px] text-muted-foreground leading-snug block">
+                                            {ds.name}
+                                          </span>
+                                          <span className="text-[9px] text-muted-foreground/50 uppercase tracking-wide">
+                                            {ds.boundary_type} · {ds.type}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                </div>
+                              );
+                            })}
+                        </div>
+                      );
+                    })}
+                    {Object.keys(grouped).length === 0 && (
+                      <p className="text-[10px] text-muted-foreground px-2 py-1">
+                        Click Search to load datasets
+                      </p>
+                    )}
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>
             </div>
 
-            {/* Time Range */}
+            {/* Time Range (only popover internals changed; headers unchanged) */}
             <div className="overflow-hidden">
               <Accordion type="single" collapsible defaultValue="time">
                 <AccordionItem value="time" className="border-none">
@@ -441,7 +581,7 @@ export function MapSidebar({
                           "w-full justify-start text-left text-xs font-normal border-accent/30 hover:border-accent hover:bg-accent/10 transition-colors h-9",
                           !dateFrom && "text-muted-foreground",
                           activeCalendar === "from" &&
-                            "bg-accent/20 border-accent",
+                            "bg-accent/20 border-accent", // Option C: active state
                         )}
                         onClick={() =>
                           setActiveCalendar(
@@ -471,7 +611,7 @@ export function MapSidebar({
                           "w-full justify-start text-left text-xs font-normal border-accent/30 hover:border-accent hover:bg-accent/10 transition-colors h-9",
                           !dateUntil && "text-muted-foreground",
                           activeCalendar === "until" &&
-                            "bg-accent/20 border-accent",
+                            "bg-accent/20 border-accent", // Option C: active state
                         )}
                         onClick={() =>
                           setActiveCalendar(
