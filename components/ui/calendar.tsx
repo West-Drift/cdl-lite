@@ -24,8 +24,8 @@ function Calendar({
         caption: "flex justify-center relative items-center w-full",
         caption_label: "text-sm font-medium",
 
-        // Weekday headings - YOU SAID THIS IS IMPORTANT
-        weekday: "text-muted-foreground font-semibold text-md",
+        // Weekday headings
+        weekday: "text-muted-foreground font-semibold text-md mb-1",
 
         // Week rows + equal columns
         head_row: "flex w-full mb-1",

@@ -63,10 +63,10 @@ export function MapCanvas() {
   const mapInstanceRef = useRef<L.Map | null>(null);
   const currentTileLayerRef = useRef<L.TileLayer | null>(null);
   const geojsonLayerRef = useRef<L.GeoJSON | null>(null);
+  const highlightedLayerRef = useRef<L.Path | null>(null); // tracks the currently selected feature
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [mode, setMode] = useState<SidebarMode>("search");
-  const [isSearching, setIsSearching] = useState(false);
 
   // Map tool toggles
   const [isLayerToolExpanded, setIsLayerToolExpanded] = useState(false);
@@ -87,12 +87,9 @@ export function MapCanvas() {
   const [boundaryMode, setBoundaryMode] = useState<BoundaryMode>("GADM");
 
   // Date range lifted from MapSidebar so ChartPanel can consume it
-  const [dateFrom, setDateFrom] = useState<Date | undefined>(
-    new Date(2020, 0, 1),
-  );
-  const [dateUntil, setDateUntil] = useState<Date | undefined>(
-    new Date(2024, 11, 31),
-  );
+  // Intentionally undefined by default — no date filter means "complete record"
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
+  const [dateUntil, setDateUntil] = useState<Date | undefined>(undefined);
 
   // Dropdown options
   const [countries] = useState<BoundaryLevelOption[]>([
@@ -110,9 +107,22 @@ export function MapCanvas() {
   const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[]>([]);
 
   // Results + RBAC
+  const [isSearching, setIsSearching] = useState(false);
   const [results, setResults] = useState<ResultItem[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [activeLayerIds, setActiveLayerIds] = useState<string[]>([]);
+  // Record counts per dataset_type, fetched on Search
+  // scope: "complete" | "country" | "filtered" drives result card display
+  const [recordCounts, setRecordCounts] = useState<
+    Record<
+      string,
+      {
+        count: number;
+        filtered: boolean;
+        scope: "complete" | "country" | "filtered";
+      }
+    >
+  >({});
 
   // Chart state
   const [activeChartId, setActiveChartId] = useState<string | null>(null);
@@ -154,6 +164,25 @@ export function MapCanvas() {
       return () => clearTimeout(t);
     }
   }, [isSidebarOpen]);
+
+  // Auto-load datasets on mount — no Search button needed
+  useEffect(() => {
+    fetch("/api/datasets")
+      .then((r) => r.json())
+      .then(({ datasets }) => {
+        const rows: DatasetItem[] = datasets ?? [];
+        setAllDatasets(rows);
+        // Default selection: ndvi_ward
+        setSelectedDatasetIds((prev) => {
+          if (prev.length > 0) return prev;
+          const def = rows.find((d) => d.id === "ndvi_ward");
+          return def ? [def.id] : rows.length > 0 ? [rows[0].id] : [];
+        });
+        // results tab is populated only when Search is clicked
+      })
+      .catch((e) => console.error("Dataset auto-load error:", e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---------- Base layer ----------
   function handleBaseLayerChange(layer: BaseLayer) {
@@ -236,29 +265,42 @@ export function MapCanvas() {
       style: styleOpts,
       onEachFeature: (feature, featureLayer) => {
         const props = (feature.properties ?? {}) as Record<string, string>;
+
+        // Show feature name on hover; falls back to id if name is absent
         featureLayer.bindTooltip(props.name ?? props.id ?? "", {
           permanent: false,
           direction: "top",
         });
 
         featureLayer.on("click", () => {
+          // Reset whichever feature was previously selected before highlighting the new one
+          if (highlightedLayerRef.current) {
+            layer.resetStyle(highlightedLayerRef.current);
+          }
+
+          // Amber highlight signals the active selection to the user
           (featureLayer as L.Path).setStyle({
-            fillOpacity: 0.45,
+            fillOpacity: 0.2,
             weight: 3,
             color: "#F59E0B",
           });
+
+          // Bring to front so the amber border isn't clipped by neighbouring polygons
+          (featureLayer as L.Path).bringToFront();
+
+          // Persist reference so it can be reset on the next click
+          highlightedLayerRef.current = featureLayer as L.Path;
+
           openChartForFeature(props, mode, currentDatasets, checkedIds);
         });
-        featureLayer.on("mouseout", () =>
-          layer.resetStyle(featureLayer as L.Path),
-        );
+
+        // Highlight persists after mouseout — it clears only when another feature is clicked
       },
     }).addTo(mapInstanceRef.current!);
 
     geojsonLayerRef.current = layer;
     mapInstanceRef.current!.fitBounds(layer.getBounds());
   }
-
   // ---------- Core boundary loaders ----------
 
   /** GADM: load polygons one level deeper than current selection */
@@ -282,10 +324,10 @@ export function MapCanvas() {
       renderGeoJSON(
         geojson,
         {
-          color: "#3B82F6",
+          color: "#05487f",
           weight: 2,
-          fillColor: "#3B82F6",
-          fillOpacity: 0.15,
+          fillColor: "#05487f",
+          fillOpacity: 0.1,
         },
         "GADM",
         datasets,
@@ -356,7 +398,7 @@ export function MapCanvas() {
           color: "#F59E0B",
           weight: 1.5,
           fillColor: "#F59E0B",
-          fillOpacity: 0.15,
+          fillOpacity: 0.1,
         },
         "SHAMBA",
         datasets,
@@ -538,45 +580,79 @@ export function MapCanvas() {
     );
   }
 
-  // ---------- Search: real /api/datasets ----------
+  // Search: filter by checked datasets, fetch record counts, 2s spinner → Results tab
   async function handleSearch() {
     setIsSearching(true);
-    try {
-      const res = await fetch("/api/datasets");
-      const { datasets } = await res.json();
 
-      const rows: DatasetItem[] = datasets ?? [];
+    const source = allDatasets.map((d) => ({
+      id: d.id,
+      name: d.name,
+      type: d.type === "raster" ? "Raster" : "Tabular",
+      category: d.category,
+      subcategory: d.subcategory,
+      sensor: d.sensor,
+      boundaryType: (d.boundary_type as BoundaryMode) ?? "GADM",
+      size: "–",
+    }));
 
-      // Populate the full dataset list (drives sidebar tree)
-      setAllDatasets(rows);
+    // Only show datasets the user checked — if nothing checked, show all
+    const filtered =
+      selectedDatasetIds.length > 0
+        ? source.filter((r) => selectedDatasetIds.includes(r.id))
+        : source;
 
-      // Auto-select ndvi_ward by default if nothing already checked
-      setSelectedDatasetIds((prev) => {
-        if (prev.length > 0) return prev;
-        const def = rows.find((d) => d.id === "ndvi_ward");
-        return def ? [def.id] : rows.length > 0 ? [rows[0].id] : [];
-      });
+    setResults(filtered);
+    setTotalCount(filtered.length);
+    setActiveLayerIds([]);
 
-      const mapped: ResultItem[] = rows.map((d) => ({
-        id: d.id,
-        name: d.name,
-        type: d.type === "raster" ? "Raster" : "Tabular",
-        category: d.category,
-        subcategory: d.subcategory,
-        sensor: d.sensor,
-        boundaryType: (d.boundary_type as BoundaryMode) ?? "GADM",
-        size: "–",
-      }));
+    // Shared location + date params (same for every dataset)
+    const hasSubRegion = !!(admin1 || admin2 || admin3);
+    const hasDateFilter = !!(dateFrom || dateUntil);
+    const searchScope: "complete" | "country" | "filtered" =
+      hasSubRegion || hasDateFilter
+        ? "filtered"
+        : country
+          ? "country"
+          : "complete";
 
-      setResults(mapped);
-      setTotalCount(mapped.length);
-      setActiveLayerIds([]);
-      setMode("results");
-    } catch (e) {
-      console.error("handleSearch error:", e);
-    } finally {
-      setIsSearching(false);
-    }
+    const baseParams = new URLSearchParams();
+    if (country) baseParams.set("country", country);
+    if (admin1) baseParams.set("admin1", admin1);
+    if (admin2) baseParams.set("admin2", admin2);
+    if (admin3) baseParams.set("admin3", admin3);
+    if (dateFrom) baseParams.set("start", dateFrom.toISOString().split("T")[0]);
+    if (dateUntil) baseParams.set("end", dateUntil.toISOString().split("T")[0]);
+
+    // Fetch record counts per dataset — pass boundary_type so the API uses
+    // the correct JOIN (GADM name-concat, TAMSAT grid_id, SHAMBA farm_id)
+    const countResults = await Promise.all(
+      filtered.map(async (r) => {
+        try {
+          const p = new URLSearchParams(baseParams);
+          p.set("dataset_type", r.id);
+          p.set("boundary_type", r.boundaryType); // "GADM" | "TAMSAT" | "SHAMBA"
+          const res = await fetch(`/api/data/count?${p.toString()}`);
+          const data = await res.json();
+          return [
+            r.id,
+            {
+              count: data.count ?? 0,
+              filtered: data.filtered ?? false,
+              scope: searchScope,
+            },
+          ] as const;
+        } catch {
+          return [
+            r.id,
+            { count: 0, filtered: false, scope: searchScope },
+          ] as const;
+        }
+      }),
+    );
+    setRecordCounts(Object.fromEntries(countResults));
+
+    setIsSearching(false);
+    setMode("results");
   }
 
   function handleToggleLayer(id: string) {
@@ -599,21 +675,6 @@ export function MapCanvas() {
       return;
     }
     alert(`Download request submitted for dataset: ${id}`);
-  }
-
-  function handleChart(id: string) {
-    if (userRole === "public") {
-      alert("Please sign in to view charts");
-      return;
-    }
-    const result = results.find((r) => r.id === id);
-    const chartName = result?.name ?? "Dataset Chart";
-    // Use deepest selected GADM code as the location_id seed
-    const locationId = admin3 ?? admin2 ?? admin1 ?? country ?? "";
-
-    setActiveChartId(id);
-    setActiveChartName(chartName);
-    setActiveChartLocationId(locationId);
   }
 
   function handleCloseChart() {
@@ -666,9 +727,9 @@ export function MapCanvas() {
           // Results
           results={results}
           totalCount={totalCount}
+          recordCounts={recordCounts}
           activeLayerIds={activeLayerIds}
           onToggleLayer={handleToggleLayer}
-          onChart={handleChart}
           onDownload={handleDownload}
           onRequest={handleRequest}
           isSidebarOpen={isSidebarOpen}

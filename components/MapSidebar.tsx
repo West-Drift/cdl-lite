@@ -20,15 +20,21 @@ import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import {
   Calendar,
   CalendarIcon,
+  CalendarRange,
   Layers,
   Globe,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Eye,
-  BarChart3,
   FileText,
   Download,
+  Loader2,
+  Leaf,
+  CloudRain,
+  Droplets,
+  Map,
+  Database,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
@@ -91,9 +97,16 @@ interface MapSidebarProps {
 
   results: ResultItem[];
   totalCount: number;
+  recordCounts: Record<
+    string,
+    {
+      count: number;
+      filtered: boolean;
+      scope: "complete" | "country" | "filtered";
+    }
+  >;
   activeLayerIds: string[];
   onToggleLayer: (id: string) => void;
-  onChart: (id: string) => void;
   onDownload: (id: string) => void;
   onRequest: (id: string) => void;
 
@@ -139,9 +152,9 @@ export function MapSidebar({
   onAdmin4Change,
 
   results,
+  recordCounts,
   activeLayerIds,
   onToggleLayer,
-  onChart,
   onDownload,
   onRequest,
 
@@ -178,10 +191,17 @@ export function MapSidebar({
 
   // Category display labels
   const CATEGORY_LABELS: Record<string, string> = {
-    vegetation: "🌿 Vegetation",
-    climate: "🌦️ Climate",
-    hydrology: "💧 Hydrology",
-    land: "🗺️ Land",
+    vegetation: "Vegetation",
+    climate: "Climate",
+    hydrology: "Hydrology",
+    land: "Land",
+  };
+
+  const CATEGORY_ICONS: Record<string, React.ReactNode> = {
+    vegetation: <Leaf className="h-3.5 w-3.5 text-green-500" />,
+    climate: <CloudRain className="h-3.5 w-3.5 text-sky-400" />,
+    hydrology: <Droplets className="h-3.5 w-3.5 text-blue-400" />,
+    land: <Map className="h-3.5 w-3.5 text-amber-500" />,
   };
 
   const SUBCATEGORY_LABELS: Record<string, string> = {
@@ -248,10 +268,6 @@ export function MapSidebar({
 
   // RBAC
   const canView = true;
-  const canChart =
-    userRole === "registered" ||
-    userRole === "verified" ||
-    userRole === "admin";
   const canRequest =
     userRole === "registered" ||
     userRole === "verified" ||
@@ -437,7 +453,7 @@ export function MapSidebar({
                       variant="ghost"
                       className="bg-accent/0 hover:bg-accent/0"
                     >
-                      <Layers className="h-3 w-3 mr-1" />
+                      <Database className="h-3 w-3 mr-1" />
                       <span>Data Sources</span>
                     </Button>
                   </AccordionTrigger>
@@ -466,11 +482,14 @@ export function MapSidebar({
                               onClick={(e) => e.stopPropagation()}
                               className="h-3.5 w-3.5 rounded accent-primary cursor-pointer"
                             />
-                            <span className="text-xs font-semibold text-primary flex-1">
+                            <span className="text-xs font-semibold text-muted-foreground flex-1 flex items-center gap-1.5">
+                              {CATEGORY_ICONS[cat] ?? (
+                                <Database className="h-3.5 w-3.5 text-muted-foreground" />
+                              )}
                               {CATEGORY_LABELS[cat] ?? cat}
                             </span>
                             <ChevronDown
-                              className={`h-3 w-3 text-muted-foreground transition-transform ${catOpen ? "rotate-180" : ""}`}
+                              className={`h-3 w-3 text-white transition-transform ${catOpen ? "rotate-180" : ""}`}
                             />
                           </div>
 
@@ -507,7 +526,7 @@ export function MapSidebar({
                                       {SUBCATEGORY_LABELS[sub] ?? sub}
                                     </span>
                                     <ChevronDown
-                                      className={`h-3 w-3 text-muted-foreground/60 transition-transform ${subOpen ? "rotate-180" : ""}`}
+                                      className={`h-3 w-3 text-white transition-transform ${subOpen ? "rotate-180" : ""}`}
                                     />
                                   </div>
 
@@ -564,7 +583,7 @@ export function MapSidebar({
                       variant="ghost"
                       className="bg-accent/0 hover:bg-accent/0"
                     >
-                      <Calendar className="h-3 w-3 mr-1" />
+                      <CalendarRange className="h-3 w-3 mr-1" />
                       <span>Time Range</span>
                     </Button>
                   </AccordionTrigger>
@@ -578,7 +597,7 @@ export function MapSidebar({
                       <Button
                         variant="outline"
                         className={cn(
-                          "w-full justify-start text-left text-xs font-normal border-accent/30 hover:border-accent hover:bg-accent/10 transition-colors h-9",
+                          "w-full justify-start text-left text-xs font-normal border-accent/30 hover:border-accent hover:bg-accent/10 hover:text-primary/80 transition-colors h-9",
                           !dateFrom && "text-muted-foreground",
                           activeCalendar === "from" &&
                             "bg-accent/20 border-accent", // Option C: active state
@@ -608,7 +627,7 @@ export function MapSidebar({
                       <Button
                         variant="outline"
                         className={cn(
-                          "w-full justify-start text-left text-xs font-normal border-accent/30 hover:border-accent hover:bg-accent/10 transition-colors h-9",
+                          "w-full justify-start text-left text-xs font-normal border-accent/30 hover:border-accent hover:bg-accent/10 hover:text-primary/80 transition-colors h-9",
                           !dateUntil && "text-muted-foreground",
                           activeCalendar === "until" &&
                             "bg-accent/20 border-accent", // Option C: active state
@@ -836,22 +855,27 @@ export function MapSidebar({
             </div>
           </div>
 
-          {/* Search Button (unchanged) */}
-          <div className="mt-2">
-            <div className="border border-border rounded-lg p-3">
-              <Button
-                className="w-full"
-                onClick={onSearch}
-                disabled={isSearching}
-              >
-                {isSearching ? "Searching…" : "Search"}
-              </Button>
-            </div>
+          {/* Search button — navigates to Results with filtered datasets */}
+          <div className="pt-2 pb-1 px-1">
+            <Button
+              className="w-full h-10 text-sm font-semibold"
+              onClick={onSearch}
+              disabled={isSearching}
+            >
+              {isSearching ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading results…
+                </span>
+              ) : (
+                "Search"
+              )}
+            </Button>
           </div>
         </>
       ) : (
         <>
-          {/* Results header (unchanged) */}
+          {/* Results header */}
           <div className="border-b border-border p-2 flex items-center justify-between gap-2">
             <Button
               variant="ghost"
@@ -861,8 +885,11 @@ export function MapSidebar({
             >
               ← Back to Search
             </Button>
-            <div>
-              <div className="text-xs">Showing {results.length} datasets</div>
+            <div className="text-right">
+              <div className="text-xs">
+                Showing {results.length} dataset
+                {results.length !== 1 ? "s" : ""}
+              </div>
             </div>
           </div>
 
@@ -879,60 +906,71 @@ export function MapSidebar({
                       key={result.id}
                       className="p-2 border border-border rounded-lg bg-card hover:bg-muted/50"
                     >
-                      <div className="flex justify-between items-start mb-2">
-                        <h4 className="text-xs font-medium text-accent">
+                      {/* Dataset name + type badge */}
+                      <div className="flex justify-between items-start mb-1">
+                        <h4 className="text-xs font-medium text-accent leading-snug">
                           {result.name}
                         </h4>
                         <Badge
                           variant="secondary"
-                          className="text-[10px] text-primary"
+                          className="text-[9px] text-primary shrink-0 ml-1"
                         >
                           {result.type}
                         </Badge>
                       </div>
-                      <p className="text-xs text-muted-foreground mb-2">
-                        {result.category} • {result.size}
-                      </p>
 
-                      {/* Action Buttons with RBAC (unchanged) */}
+                      {/* Record count / scope context */}
+                      <div className="text-[10px] text-muted-foreground space-y-0.5 mb-2 border-l-2 border-accent/30 pl-2">
+                        <div className="capitalize flex items-center gap-1 flex-wrap">
+                          <span>{result.category}</span>
+                          <span className="text-muted-foreground/40">·</span>
+                          {(() => {
+                            const rc = recordCounts[result.id];
+                            if (!rc) return null;
+                            if (rc.scope === "filtered") {
+                              return (
+                                <span className="text-accent/70 font-medium">
+                                  {rc.count.toLocaleString()} records
+                                </span>
+                              );
+                            }
+                            if (rc.scope === "country") {
+                              return (
+                                <span className="text-muted-foreground/60 italic">
+                                  complete record
+                                </span>
+                              );
+                            }
+                            // "complete" — no location, no date
+                            return (
+                              <span className="text-muted-foreground/60 italic">
+                                complete record
+                              </span>
+                            );
+                          })()}
+                        </div>
+                        {(dateFrom || dateUntil) && (
+                          <div className="flex items-center gap-1 text-muted-foreground">
+                            <CalendarRange className="h-3 w-3 shrink-0 text-primary" />
+                            {dateFrom ? format(dateFrom, "MMM yyyy") : "–"} →{" "}
+                            {dateUntil ? format(dateUntil, "MMM yyyy") : "–"}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Actions — View / Request / Download only */}
                       <div className="flex gap-1 flex-wrap">
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="h-7 px-1 text-[10px] text-muted-foreground"
+                          className="h-7 px-2 text-[10px] text-muted-foreground"
                           onClick={() => onToggleLayer(result.id)}
                           disabled={!canView}
                         >
                           <Eye
-                            className={`h-3 w-3 mr-1 ${
-                              isActive
-                                ? "text-primary"
-                                : "text-muted-foreground"
-                            }`}
+                            className={`h-3 w-3 mr-1 ${isActive ? "text-primary" : "text-muted-foreground"}`}
                           />
                           {isActive ? "Hide" : "View"}
-                        </Button>
-
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-2 text-[10px] text-muted-foreground"
-                          onClick={() => {
-                            if (!canChart) {
-                              alert("Please sign in to access charts");
-                              return;
-                            }
-                            onChart(result.id);
-                          }}
-                        >
-                          <BarChart3
-                            className={`h-3 w-3 mr-1 ${
-                              canChart && isActive
-                                ? "text-primary"
-                                : "text-muted-foreground"
-                            }`}
-                          />
-                          Chart
                         </Button>
 
                         <Button
@@ -959,7 +997,7 @@ export function MapSidebar({
                           onClick={() => {
                             if (!canDownload) {
                               alert(
-                                "Direct download requires admin privileges. Please use Request to submit a download request.",
+                                "Direct download requires admin privileges.",
                               );
                               return;
                             }
