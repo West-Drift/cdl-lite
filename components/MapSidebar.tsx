@@ -18,10 +18,8 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import {
-  Calendar,
   CalendarIcon,
   CalendarRange,
-  Layers,
   Globe,
   ChevronDown,
   ChevronLeft,
@@ -67,6 +65,8 @@ interface DatasetItem {
   category: string;
   subcategory: string;
   sensor: string | null;
+  mask: string; // 'none' | 'cropland' | 'forage'
+  frequency: string | null;
   type: string;
   boundary_type: string;
 }
@@ -127,6 +127,57 @@ interface MapSidebarProps {
   onToggleSidebar: () => void;
 }
 
+// ── Display maps ──────────────────────────────────────────────────────────────
+
+const CATEGORY_LABELS: Record<string, string> = {
+  vegetation: "Vegetation",
+  climate: "Climate",
+  hydrology: "Hydrology",
+  land: "Land",
+};
+
+const CATEGORY_ICONS: Record<string, React.ReactNode> = {
+  vegetation: <Leaf className="h-3.5 w-3.5 text-green-500" />,
+  climate: <CloudRain className="h-3.5 w-3.5 text-sky-400" />,
+  hydrology: <Droplets className="h-3.5 w-3.5 text-blue-400" />,
+  land: <Map className="h-3.5 w-3.5 text-amber-500" />,
+};
+
+const SUBCATEGORY_LABELS: Record<string, string> = {
+  ndvi: "NDVI",
+  lai: "LAI",
+  bai: "BAI",
+  vhi: "VHI",
+  rainfall: "Rainfall",
+  lst: "LST",
+  wind: "Wind",
+  soil_moisture: "Soil Moisture",
+  et: "Evapotranspiration",
+  land_cover: "Land Cover",
+  soil_map: "Soil Map",
+};
+
+const BOUNDARY_LABELS: Record<string, string> = {
+  GADM: "GADM (Ward)",
+  TAMSAT: "TAMSAT (Grid)",
+  SHAMBA: "SHAMBA (Farm)",
+};
+
+const MASK_LABELS: Record<string, string> = {
+  none: "No Mask",
+  cropland: "Cropland Mask",
+  forage: "Forage Mask",
+};
+
+// Dot colors used in the tree next to mask rows — mirrors ChartPanel colors
+const MASK_COLORS: Record<string, string> = {
+  none: "bg-indigo-400",
+  cropland: "bg-green-400",
+  forage: "bg-yellow-400",
+};
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export function MapSidebar({
   userRole,
   mode,
@@ -172,16 +223,11 @@ export function MapSidebar({
   isSidebarOpen,
   onToggleSidebar,
 }: MapSidebarProps) {
-  // Independent month/year browsing views
   const [fromView, setFromView] = useState<Date>(dateFrom ?? new Date());
   const [untilView, setUntilView] = useState<Date>(dateUntil ?? new Date());
-
-  // Which popover calendar is open
   const [activeCalendar, setActiveCalendar] = useState<"from" | "until" | null>(
     null,
   );
-
-  // Expanded category / subcategory accordion nodes
   const [expandedNodes, setExpandedNodes] = useState<string[]>(["vegetation"]);
 
   const toggleNode = (key: string) =>
@@ -189,84 +235,51 @@ export function MapSidebar({
       prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
     );
 
-  // Category display labels
-  const CATEGORY_LABELS: Record<string, string> = {
-    vegetation: "Vegetation",
-    climate: "Climate",
-    hydrology: "Hydrology",
-    land: "Land",
+  // ── Checked-state helpers ──────────────────────────────────────────────────
+
+  const checkedState = (datasets: DatasetItem[]): "all" | "some" | "none" => {
+    const n = datasets.filter((d) => selectedDatasetIds.includes(d.id)).length;
+    if (n === datasets.length) return "all";
+    if (n > 0) return "some";
+    return "none";
   };
 
-  const CATEGORY_ICONS: Record<string, React.ReactNode> = {
-    vegetation: <Leaf className="h-3.5 w-3.5 text-green-500" />,
-    climate: <CloudRain className="h-3.5 w-3.5 text-sky-400" />,
-    hydrology: <Droplets className="h-3.5 w-3.5 text-blue-400" />,
-    land: <Map className="h-3.5 w-3.5 text-amber-500" />,
+  const toggleSet = (datasets: DatasetItem[]) => {
+    const ids = datasets.map((d) => d.id);
+    const allOn = ids.every((id) => selectedDatasetIds.includes(id));
+    const next = allOn
+      ? selectedDatasetIds.filter((id) => !ids.includes(id))
+      : [...new Set([...selectedDatasetIds, ...ids])];
+    onDatasetSelectionChange(next);
   };
 
-  const SUBCATEGORY_LABELS: Record<string, string> = {
-    ndvi: "NDVI",
-    lai: "LAI",
-    bai: "BAI",
-    rainfall: "Rainfall",
-    lst: "LST",
-    wind: "Wind",
-    soil_moisture: "Soil Moisture",
-    et: "Evapotranspiration",
-    land_cover: "Land Cover",
-    soil_map: "Soil Map",
-  };
-
-  // Group allDatasets into category → subcategory → datasets[]
-  const grouped = allDatasets.reduce<
-    Record<string, Record<string, DatasetItem[]>>
-  >((acc, ds) => {
-    const cat = ds.category;
-    const sub = ds.subcategory;
-    if (!acc[cat]) acc[cat] = {};
-    if (!acc[cat][sub]) acc[cat][sub] = [];
-    acc[cat][sub].push(ds);
-    return acc;
-  }, {});
-
-  // Checkbox helpers
-  const toggleDataset = (id: string) => {
+  const toggleOne = (id: string) => {
     const next = selectedDatasetIds.includes(id)
       ? selectedDatasetIds.filter((x) => x !== id)
       : [...selectedDatasetIds, id];
     onDatasetSelectionChange(next);
   };
 
-  const toggleSubcategory = (datasets: DatasetItem[]) => {
-    const ids = datasets.map((d) => d.id);
-    const allChecked = ids.every((id) => selectedDatasetIds.includes(id));
-    const next = allChecked
-      ? selectedDatasetIds.filter((id) => !ids.includes(id))
-      : [...new Set([...selectedDatasetIds, ...ids])];
-    onDatasetSelectionChange(next);
-  };
+  // ── Group datasets: category → subcategory → boundary_type → mask → items ──
+  //
+  // Structure: grouped[cat][sub][btype][mask] = DatasetItem[]
 
-  const toggleCategory = (datasets: DatasetItem[]) => {
-    const ids = datasets.map((d) => d.id);
-    const allChecked = ids.every((id) => selectedDatasetIds.includes(id));
-    const next = allChecked
-      ? selectedDatasetIds.filter((id) => !ids.includes(id))
-      : [...new Set([...selectedDatasetIds, ...ids])];
-    onDatasetSelectionChange(next);
-  };
+  type MaskGroup = Record<string, DatasetItem[]>;
+  type BtypeGroup = Record<string, MaskGroup>;
+  type SubGroup = Record<string, BtypeGroup>;
+  type CatGroup = Record<string, SubGroup>;
 
-  const subcategoryCheckedState = (
-    datasets: DatasetItem[],
-  ): "all" | "some" | "none" => {
-    const checked = datasets.filter((d) =>
-      selectedDatasetIds.includes(d.id),
-    ).length;
-    if (checked === datasets.length) return "all";
-    if (checked > 0) return "some";
-    return "none";
-  };
+  const grouped = allDatasets.reduce<CatGroup>((acc, ds) => {
+    const { category: cat, subcategory: sub, boundary_type: bt, mask } = ds;
+    if (!acc[cat]) acc[cat] = {};
+    if (!acc[cat][sub]) acc[cat][sub] = {};
+    if (!acc[cat][sub][bt]) acc[cat][sub][bt] = {};
+    if (!acc[cat][sub][bt][mask]) acc[cat][sub][bt][mask] = [];
+    acc[cat][sub][bt][mask].push(ds);
+    return acc;
+  }, {});
 
-  // RBAC
+  // ── RBAC ──────────────────────────────────────────────────────────────────
   const canView = true;
   const canRequest =
     userRole === "registered" ||
@@ -274,27 +287,23 @@ export function MapSidebar({
     userRole === "admin";
   const canDownload = userRole === "admin";
 
-  // Boundary tooltips
+  // ── Boundary tooltip ───────────────────────────────────────────────────────
   const boundaryModeTooltips = {
-    GADM: "Official administrative boundaries (Country → County → Subcounty → Ward → Village)",
+    GADM: "Official administrative boundaries (Country → County → Subcounty → Ward)",
     TAMSAT: "4km climate grid cells linked to administrative boundaries",
     SHAMBA: "Farm polygons linked to administrative boundaries",
   };
 
-  /**
-   * Custom header with 4 arrows (Month ‹/› on left, Year ‹/› on right).
-   * This is rendered OUTSIDE the DayPicker to avoid interfering with your existing styles.
-   */
+  // ── Calendar helpers (unchanged) ───────────────────────────────────────────
+
   const renderCalendarHeader = (
     viewDate: Date,
     setViewDate: (d: Date) => void,
   ) => {
     const month = viewDate.getMonth();
     const year = viewDate.getFullYear();
-
     return (
       <div className="flex justify-between items-center px-2 py-2">
-        {/* Month controls */}
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -314,8 +323,6 @@ export function MapSidebar({
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
-
-        {/* Year controls */}
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -339,100 +346,102 @@ export function MapSidebar({
     );
   };
 
-  /**
-   * Reusable calendar popover box for both "From" and "Until".
-   * - Independent month/year browsing (viewDate)
-   * - Subheader (caption) kept and styled as text-primary
-   * - Even 7-column layout with centered days
-   */
   const renderCalendarBox = (
     selectedDate: Date | undefined,
     setSelectedDate: (d: Date | undefined) => void,
     viewDate: Date,
     setViewDate: (d: Date) => void,
-  ) => {
+  ) => (
+    <div className="border border-accent/30 rounded-lg bg-card shadow-lg overflow-hidden">
+      {renderCalendarHeader(viewDate, setViewDate)}
+      <CalendarComponent
+        mode="single"
+        selected={selectedDate}
+        onSelect={(d) => setSelectedDate(d)}
+        month={viewDate}
+        onMonthChange={setViewDate}
+        captionLayout="label"
+        hideNavigation
+        disabled={(date) => date > new Date()}
+        classNames={{
+          caption_label: "text-primary text-xs font-semibold text-center mb-1",
+          months: "flex w-full",
+          month: "w-full p-3 pt-0",
+          table: "w-full border-collapse border-spacing-0",
+          head_row: "flex w-full mb-1",
+          head_cell:
+            "text-muted-foreground flex-1 font-normal text-[0.65rem] text-center",
+          row: "flex w-full",
+          day: "flex-1 text-center text-xs p-1 relative",
+          day_button:
+            "h-4 w-4 p-0 font-normal hover:bg-accent/40 rounded-full transition-colors text-xs inline-flex items-center justify-center",
+          selected:
+            "bg-accent text-primary hover:bg-accent/90 focus:bg-accent font-semibold",
+          today: "bg-muted text-accent font-semibold",
+          outside: "text-muted-foreground/40",
+          disabled:
+            "text-muted-foreground/40 cursor-not-allowed hover:bg-transparent",
+          hidden: "invisible",
+        }}
+      />
+    </div>
+  );
+
+  // ── Checkbox render helper ─────────────────────────────────────────────────
+
+  const Checkbox = ({
+    state,
+    onChange,
+    onClick,
+    className = "h-3 w-3",
+  }: {
+    state: "all" | "some" | "none" | boolean;
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+    onClick?: (e: React.MouseEvent) => void;
+    className?: string;
+  }) => {
+    const checked = state === "all" || state === true;
+    const indeterminate = state === "some";
     return (
-      <div className="border border-accent/30 rounded-lg bg-card shadow-lg overflow-hidden">
-        {renderCalendarHeader(viewDate, setViewDate)}
-
-        <CalendarComponent
-          mode="single"
-          selected={selectedDate}
-          onSelect={(d) => setSelectedDate(d)}
-          month={viewDate}
-          onMonthChange={setViewDate}
-          captionLayout="label" // keep label for subheader (February 2026)
-          hideNavigation // remove DayPicker's own arrows
-          disabled={(date) => date > new Date()}
-          classNames={{
-            // Subheader "February 2026"
-            caption_label:
-              "text-primary text-xs font-semibold text-center mb-1",
-
-            // Make weekday header compact and centered across 7 equal columns
-            months: "flex w-full",
-            month: "w-full p-3 pt-0",
-            table: "w-full border-collapse border-spacing-0",
-            head_row: "flex w-full mb-1",
-            head_cell:
-              "text-muted-foreground flex-1 font-normal text-[0.65rem] text-center",
-
-            // Even 7-column grid for day rows
-            row: "flex w-full",
-
-            // Each day cell expands evenly and centers its content
-            day: "flex-1 text-center text-xs p-1 relative",
-
-            // Clickable button inside the cell (Roomier height and perfect centering)
-            day_button:
-              "h-4 w-4 p-0 font-normal hover:bg-accent/40 rounded-full transition-colors text-xs inline-flex items-center justify-center",
-
-            // Modifiers
-            selected:
-              "bg-accent text-primary hover:bg-accent/90 focus:bg-accent font-semibold",
-            today: "bg-muted text-accent font-semibold",
-            outside: "text-muted-foreground/40",
-            disabled:
-              "text-muted-foreground/40 cursor-not-allowed hover:bg-transparent",
-            hidden: "invisible",
-          }}
-        />
-      </div>
+      <input
+        type="checkbox"
+        checked={checked}
+        ref={(el) => {
+          if (el) el.indeterminate = indeterminate;
+        }}
+        onChange={onChange}
+        onClick={onClick}
+        className={`${className} rounded accent-primary cursor-pointer shrink-0`}
+      />
     );
   };
 
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   return (
     <div className="w-80 bg-card border-r border-border flex flex-col h-[80vh] overflow-hidden">
-      {/* Sidebar Quick Tabs (unchanged) */}
+      {/* Tab bar */}
       <div className="border-b border-border relative">
         <div className="grid grid-cols-2">
-          <button
-            onClick={() => onModeChange("search")}
-            className={`py-3 px-4 text-sm font-semibold uppercase tracking-wide transition-all border-b-2 ${
-              mode === "search"
-                ? "border-accent bg-primary text-accent"
-                : "border-transparent bg-accent/40 text-primary hover:bg-muted"
-            }`}
-          >
-            Search
-          </button>
-          <button
-            onClick={() => onModeChange("results")}
-            className={`py-3 px-4 text-sm font-semibold uppercase tracking-wide transition-all border-b-2 ${
-              mode === "results"
-                ? "border-accent bg-primary text-accent"
-                : "border-transparent bg-accent/40 text-primary hover:bg-muted"
-            }`}
-          >
-            Results
-          </button>
+          {(["search", "results"] as SidebarMode[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => onModeChange(m)}
+              className={`py-3 px-4 text-sm font-semibold uppercase tracking-wide transition-all border-b-2 ${
+                mode === m
+                  ? "border-accent bg-primary text-accent"
+                  : "border-transparent bg-accent/40 text-primary hover:bg-muted"
+              }`}
+            >
+              {m === "search" ? "Search" : "Results"}
+            </button>
+          ))}
         </div>
-
         {isSidebarOpen && (
           <Button
             variant="ghost"
             size="icon"
-            className="absolute -right-2 top-1/2 -translate-y-1/2 h-6 w-6 rounded-[12px] bg-accent shadow-md hover:bg-accent/80 z-10 hover:shadow-lg"
+            className="absolute -right-2 top-1/2 -translate-y-1/2 h-6 w-6 rounded-[12px] bg-accent shadow-md hover:bg-accent/80 z-10"
             onClick={onToggleSidebar}
           >
             <ChevronLeft className="h-4 w-4" />
@@ -440,10 +449,11 @@ export function MapSidebar({
         )}
       </div>
 
+      {/* ── SEARCH mode ─────────────────────────────────────────────────── */}
       {mode === "search" ? (
         <>
           <div className="flex-1 overflow-y-auto p-4 border border-border rounded-lg mt-4 space-y-4">
-            {/* Data Sources — nested tree from DB */}
+            {/* Data Sources — 5-level tree */}
             <div className="overflow-hidden">
               <Accordion type="multiple" defaultValue={["sources"]}>
                 <AccordionItem value="sources" className="border-none">
@@ -457,11 +467,24 @@ export function MapSidebar({
                       <span>Data Sources</span>
                     </Button>
                   </AccordionTrigger>
+
                   <AccordionContent className="px-2 pb-4 pt-2 space-y-1">
+                    {Object.keys(grouped).length === 0 && (
+                      <p className="text-[10px] text-muted-foreground px-2 py-1">
+                        Click Search to load datasets
+                      </p>
+                    )}
+
+                    {/* Level 1 — Category */}
                     {Object.entries(grouped).map(([cat, subcats]) => {
-                      const catDatasets = Object.values(subcats).flat();
-                      const catState = subcategoryCheckedState(catDatasets);
+                      const catDatasets = Object.values(subcats).flatMap((bt) =>
+                        Object.values(bt).flatMap((m) =>
+                          Object.values(m).flat(),
+                        ),
+                      );
+                      const catState = checkedState(catDatasets);
                       const catOpen = expandedNodes.includes(cat);
+
                       return (
                         <div key={cat} className="space-y-0.5">
                           {/* Category row */}
@@ -469,22 +492,18 @@ export function MapSidebar({
                             className="flex items-center gap-1.5 py-1 px-1 rounded hover:bg-accent/20 cursor-pointer select-none"
                             onClick={() => toggleNode(cat)}
                           >
-                            <input
-                              type="checkbox"
-                              checked={catState === "all"}
-                              ref={(el) => {
-                                if (el) el.indeterminate = catState === "some";
-                              }}
+                            <Checkbox
+                              state={catState}
                               onChange={(e) => {
                                 e.stopPropagation();
-                                toggleCategory(catDatasets);
+                                toggleSet(catDatasets);
                               }}
                               onClick={(e) => e.stopPropagation()}
-                              className="h-3.5 w-3.5 rounded accent-primary cursor-pointer"
+                              className="h-3.5 w-3.5"
                             />
                             <span className="text-xs font-semibold text-muted-foreground flex-1 flex items-center gap-1.5">
                               {CATEGORY_ICONS[cat] ?? (
-                                <Database className="h-3.5 w-3.5 text-muted-foreground" />
+                                <Database className="h-3.5 w-3.5" />
                               )}
                               {CATEGORY_LABELS[cat] ?? cat}
                             </span>
@@ -493,13 +512,16 @@ export function MapSidebar({
                             />
                           </div>
 
-                          {/* Subcategories */}
+                          {/* Level 2 — Subcategory */}
                           {catOpen &&
-                            Object.entries(subcats).map(([sub, datasets]) => {
-                              const subState =
-                                subcategoryCheckedState(datasets);
+                            Object.entries(subcats).map(([sub, btypes]) => {
+                              const subDatasets = Object.values(btypes).flatMap(
+                                (m) => Object.values(m).flat(),
+                              );
+                              const subState = checkedState(subDatasets);
                               const subKey = `${cat}:${sub}`;
                               const subOpen = expandedNodes.includes(subKey);
+
                               return (
                                 <div key={sub} className="ml-3 space-y-0.5">
                                   {/* Subcategory row */}
@@ -507,20 +529,13 @@ export function MapSidebar({
                                     className="flex items-center gap-1.5 py-0.5 px-1 rounded hover:bg-accent/10 cursor-pointer select-none"
                                     onClick={() => toggleNode(subKey)}
                                   >
-                                    <input
-                                      type="checkbox"
-                                      checked={subState === "all"}
-                                      ref={(el) => {
-                                        if (el)
-                                          el.indeterminate =
-                                            subState === "some";
-                                      }}
+                                    <Checkbox
+                                      state={subState}
                                       onChange={(e) => {
                                         e.stopPropagation();
-                                        toggleSubcategory(datasets);
+                                        toggleSet(subDatasets);
                                       }}
                                       onClick={(e) => e.stopPropagation()}
-                                      className="h-3 w-3 rounded accent-primary cursor-pointer"
                                     />
                                     <span className="text-[11px] font-medium text-primary/80 flex-1">
                                       {SUBCATEGORY_LABELS[sub] ?? sub}
@@ -530,50 +545,155 @@ export function MapSidebar({
                                     />
                                   </div>
 
-                                  {/* Individual datasets */}
+                                  {/* Level 3 — Boundary type */}
                                   {subOpen &&
-                                    datasets.map((ds) => (
-                                      <div
-                                        key={ds.id}
-                                        className="ml-4 flex items-start gap-1.5 py-0.5 px-1 rounded hover:bg-accent/10 cursor-pointer"
-                                        onClick={() => toggleDataset(ds.id)}
-                                      >
-                                        <input
-                                          type="checkbox"
-                                          checked={selectedDatasetIds.includes(
-                                            ds.id,
-                                          )}
-                                          onChange={() => toggleDataset(ds.id)}
-                                          onClick={(e) => e.stopPropagation()}
-                                          className="h-3 w-3 mt-0.5 rounded accent-primary cursor-pointer"
-                                        />
-                                        <div className="flex-1 min-w-0">
-                                          <span className="text-[10px] text-muted-foreground leading-snug block">
-                                            {ds.name}
-                                          </span>
-                                          <span className="text-[9px] text-muted-foreground/50 uppercase tracking-wide">
-                                            {ds.boundary_type} · {ds.type}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    ))}
+                                    Object.entries(btypes).map(
+                                      ([bt, masks]) => {
+                                        const btDatasets =
+                                          Object.values(masks).flat();
+                                        const btState =
+                                          checkedState(btDatasets);
+                                        const btKey = `${subKey}:${bt}`;
+                                        const btOpen =
+                                          expandedNodes.includes(btKey);
+
+                                        return (
+                                          <div
+                                            key={bt}
+                                            className="ml-3 space-y-0.5"
+                                          >
+                                            {/* Boundary type row */}
+                                            <div
+                                              className="flex items-center gap-1.5 py-0.5 px-1 rounded hover:bg-accent/10 cursor-pointer select-none"
+                                              onClick={() => toggleNode(btKey)}
+                                            >
+                                              <Checkbox
+                                                state={btState}
+                                                onChange={(e) => {
+                                                  e.stopPropagation();
+                                                  toggleSet(btDatasets);
+                                                }}
+                                                onClick={(e) =>
+                                                  e.stopPropagation()
+                                                }
+                                              />
+                                              <span className="text-[10px] font-medium text-muted-foreground/80 flex-1 uppercase tracking-wide">
+                                                {BOUNDARY_LABELS[bt] ?? bt}
+                                              </span>
+                                              <ChevronDown
+                                                className={`h-3 w-3 text-white/60 transition-transform ${btOpen ? "rotate-180" : ""}`}
+                                              />
+                                            </div>
+
+                                            {/* Level 4 — Mask */}
+                                            {btOpen &&
+                                              Object.entries(masks).map(
+                                                ([mask, datasets]) => {
+                                                  const maskState =
+                                                    checkedState(datasets);
+                                                  const maskKey = `${btKey}:${mask}`;
+                                                  const maskOpen =
+                                                    expandedNodes.includes(
+                                                      maskKey,
+                                                    );
+
+                                                  return (
+                                                    <div
+                                                      key={mask}
+                                                      className="ml-3 space-y-0.5"
+                                                    >
+                                                      {/* Mask row */}
+                                                      <div
+                                                        className="flex items-center gap-1.5 py-0.5 px-1 rounded hover:bg-accent/10 cursor-pointer select-none"
+                                                        onClick={() =>
+                                                          toggleNode(maskKey)
+                                                        }
+                                                      >
+                                                        <Checkbox
+                                                          state={maskState}
+                                                          onChange={(e) => {
+                                                            e.stopPropagation();
+                                                            toggleSet(datasets);
+                                                          }}
+                                                          onClick={(e) =>
+                                                            e.stopPropagation()
+                                                          }
+                                                        />
+                                                        <span
+                                                          className={`inline-block h-2 w-2 rounded-full shrink-0 ${MASK_COLORS[mask] ?? "bg-gray-400"}`}
+                                                        />
+                                                        <span className="text-[10px] text-muted-foreground/70 flex-1">
+                                                          {MASK_LABELS[mask] ??
+                                                            mask}
+                                                        </span>
+                                                        <ChevronDown
+                                                          className={`h-3 w-3 text-white/50 transition-transform ${maskOpen ? "rotate-180" : ""}`}
+                                                        />
+                                                      </div>
+
+                                                      {/* Level 5 — Individual datasets (sensor + frequency) */}
+                                                      {maskOpen &&
+                                                        datasets.map((ds) => (
+                                                          <div
+                                                            key={ds.id}
+                                                            className="ml-4 flex items-start gap-1.5 py-0.5 px-1 rounded hover:bg-accent/10 cursor-pointer"
+                                                            onClick={() =>
+                                                              toggleOne(ds.id)
+                                                            }
+                                                          >
+                                                            <Checkbox
+                                                              state={selectedDatasetIds.includes(
+                                                                ds.id,
+                                                              )}
+                                                              onChange={() =>
+                                                                toggleOne(ds.id)
+                                                              }
+                                                              onClick={(e) =>
+                                                                e.stopPropagation()
+                                                              }
+                                                            />
+                                                            <div className="flex-1 min-w-0">
+                                                              <span className="text-[10px] text-muted-foreground leading-snug block">
+                                                                {ds.name}
+                                                              </span>
+                                                              {(ds.sensor ||
+                                                                ds.frequency) && (
+                                                                <span className="text-[9px] text-muted-foreground/50 uppercase tracking-wide">
+                                                                  {[
+                                                                    ds.sensor,
+                                                                    ds.frequency,
+                                                                  ]
+                                                                    .filter(
+                                                                      Boolean,
+                                                                    )
+                                                                    .join(
+                                                                      " · ",
+                                                                    )}
+                                                                </span>
+                                                              )}
+                                                            </div>
+                                                          </div>
+                                                        ))}
+                                                    </div>
+                                                  );
+                                                },
+                                              )}
+                                          </div>
+                                        );
+                                      },
+                                    )}
                                 </div>
                               );
                             })}
                         </div>
                       );
                     })}
-                    {Object.keys(grouped).length === 0 && (
-                      <p className="text-[10px] text-muted-foreground px-2 py-1">
-                        Click Search to load datasets
-                      </p>
-                    )}
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>
             </div>
 
-            {/* Time Range (only popover internals changed; headers unchanged) */}
+            {/* Time Range */}
             <div className="overflow-hidden">
               <Accordion type="single" collapsible defaultValue="time">
                 <AccordionItem value="time" className="border-none">
@@ -587,7 +707,6 @@ export function MapSidebar({
                       <span>Time Range</span>
                     </Button>
                   </AccordionTrigger>
-
                   <AccordionContent className="px-4 pb-4 pt-3 space-y-3">
                     {/* From */}
                     <div className="space-y-2">
@@ -600,7 +719,7 @@ export function MapSidebar({
                           "w-full justify-start text-left text-xs font-normal border-accent/30 hover:border-accent hover:bg-accent/10 hover:text-primary/80 transition-colors h-9",
                           !dateFrom && "text-muted-foreground",
                           activeCalendar === "from" &&
-                            "bg-accent/20 border-accent", // Option C: active state
+                            "bg-accent/20 border-accent",
                         )}
                         onClick={() =>
                           setActiveCalendar(
@@ -618,7 +737,6 @@ export function MapSidebar({
                         )}
                       </Button>
                     </div>
-
                     {/* Until */}
                     <div className="space-y-2">
                       <Label className="text-xs font-medium text-muted-foreground">
@@ -630,7 +748,7 @@ export function MapSidebar({
                           "w-full justify-start text-left text-xs font-normal border-accent/30 hover:border-accent hover:bg-accent/10 hover:text-primary/80 transition-colors h-9",
                           !dateUntil && "text-muted-foreground",
                           activeCalendar === "until" &&
-                            "bg-accent/20 border-accent", // Option C: active state
+                            "bg-accent/20 border-accent",
                         )}
                         onClick={() =>
                           setActiveCalendar(
@@ -648,8 +766,6 @@ export function MapSidebar({
                         )}
                       </Button>
                     </div>
-
-                    {/* Popover calendar (From / Until) */}
                     {activeCalendar === "from" &&
                       renderCalendarBox(
                         dateFrom,
@@ -657,7 +773,6 @@ export function MapSidebar({
                         fromView,
                         setFromView,
                       )}
-
                     {activeCalendar === "until" &&
                       renderCalendarBox(
                         dateUntil,
@@ -665,18 +780,13 @@ export function MapSidebar({
                         untilView,
                         setUntilView,
                       )}
-
-                    {/* Selected Range */}
                     <div className="bg-primary/5 border border-accent/20 rounded-lg p-2.5">
                       <div className="text-xs text-muted-foreground mb-1">
                         Selected Range:
                       </div>
                       <div className="text-xs font-medium text-accent">
                         {dateFrom && dateUntil
-                          ? `${format(dateFrom, "MMM d, yyyy")} - ${format(
-                              dateUntil,
-                              "MMM d, yyyy",
-                            )}`
+                          ? `${format(dateFrom, "MMM d, yyyy")} - ${format(dateUntil, "MMM d, yyyy")}`
                           : "No range selected"}
                       </div>
                     </div>
@@ -685,7 +795,7 @@ export function MapSidebar({
               </Accordion>
             </div>
 
-            {/* Boundary Selection (unchanged) */}
+            {/* Boundary Selection */}
             <div className="overflow-hidden">
               <Accordion type="single" collapsible defaultValue="boundaries">
                 <AccordionItem value="boundaries" className="border-none">
@@ -700,46 +810,27 @@ export function MapSidebar({
                     </Button>
                   </AccordionTrigger>
                   <AccordionContent className="px-4 pb-4 pt-3 space-y-3">
-                    {/* Toggle: GADM | TAMSAT | SHAMBA */}
+                    {/* Mode toggle */}
                     <div className="border-b border-border mb-3">
                       <div className="grid grid-cols-3">
-                        <button
-                          onClick={() => onBoundaryModeChange("GADM")}
-                          className={`py-2 px-3 text-xs font-semibold uppercase tracking-wide transition-all border-b-2 ${
-                            boundaryMode === "GADM"
-                              ? "border-accent text-accent"
-                              : "border-transparent text-muted-foreground hover:text-primary"
-                          }`}
-                          title={boundaryModeTooltips.GADM}
-                        >
-                          GADM
-                        </button>
-                        <button
-                          onClick={() => onBoundaryModeChange("TAMSAT")}
-                          className={`py-2 px-3 text-xs font-semibold uppercase tracking-wide transition-all border-b-2 ${
-                            boundaryMode === "TAMSAT"
-                              ? "border-accent text-accent"
-                              : "border-transparent text-muted-foreground hover:text-primary"
-                          }`}
-                          title={boundaryModeTooltips.TAMSAT}
-                        >
-                          TAMSAT
-                        </button>
-                        <button
-                          onClick={() => onBoundaryModeChange("SHAMBA")}
-                          className={`py-2 px-3 text-xs font-semibold uppercase tracking-wide transition-all border-b-2 ${
-                            boundaryMode === "SHAMBA"
-                              ? "border-accent text-accent"
-                              : "border-transparent text-muted-foreground hover:text-primary"
-                          }`}
-                          title={boundaryModeTooltips.SHAMBA}
-                        >
-                          SHAMBA
-                        </button>
+                        {(["GADM", "TAMSAT", "SHAMBA"] as BoundaryMode[]).map(
+                          (m) => (
+                            <button
+                              key={m}
+                              onClick={() => onBoundaryModeChange(m)}
+                              className={`py-2 px-3 text-xs font-semibold uppercase tracking-wide transition-all border-b-2 ${
+                                boundaryMode === m
+                                  ? "border-accent text-accent"
+                                  : "border-transparent text-muted-foreground hover:text-primary"
+                              }`}
+                              title={boundaryModeTooltips[m]}
+                            >
+                              {m}
+                            </button>
+                          ),
+                        )}
                       </div>
                     </div>
-
-                    {/* Mode Description */}
                     <div className="bg-muted/50 rounded-lg p-2 mb-3">
                       <p className="text-[10px] text-muted-foreground leading-relaxed">
                         {boundaryModeTooltips[boundaryMode]}
@@ -855,7 +946,7 @@ export function MapSidebar({
             </div>
           </div>
 
-          {/* Search button — navigates to Results with filtered datasets */}
+          {/* Search button */}
           <div className="pt-2 pb-1 px-1">
             <Button
               className="w-full h-10 text-sm font-semibold"
@@ -874,8 +965,8 @@ export function MapSidebar({
           </div>
         </>
       ) : (
+        /* ── RESULTS mode ───────────────────────────────────────────────── */
         <>
-          {/* Results header */}
           <div className="border-b border-border p-2 flex items-center justify-between gap-2">
             <Button
               variant="ghost"
@@ -893,7 +984,6 @@ export function MapSidebar({
             </div>
           </div>
 
-          {/* Results list (unchanged) */}
           <div className="flex-1 overflow-y-auto p-2">
             {results.length === 0 ? (
               <p className="text-xs text-muted-foreground">No results found.</p>
@@ -901,12 +991,12 @@ export function MapSidebar({
               <div className="space-y-3">
                 {results.map((result) => {
                   const isActive = activeLayerIds.includes(result.id);
+                  const rc = recordCounts[result.id];
                   return (
                     <div
                       key={result.id}
                       className="p-2 border border-border rounded-lg bg-card hover:bg-muted/50"
                     >
-                      {/* Dataset name + type badge */}
                       <div className="flex justify-between items-start mb-1">
                         <h4 className="text-xs font-medium text-accent leading-snug">
                           {result.name}
@@ -919,35 +1009,20 @@ export function MapSidebar({
                         </Badge>
                       </div>
 
-                      {/* Record count / scope context */}
                       <div className="text-[10px] text-muted-foreground space-y-0.5 mb-2 border-l-2 border-accent/30 pl-2">
                         <div className="capitalize flex items-center gap-1 flex-wrap">
                           <span>{result.category}</span>
                           <span className="text-muted-foreground/40">·</span>
-                          {(() => {
-                            const rc = recordCounts[result.id];
-                            if (!rc) return null;
-                            if (rc.scope === "filtered") {
-                              return (
-                                <span className="text-accent/70 font-medium">
-                                  {rc.count.toLocaleString()} records
-                                </span>
-                              );
-                            }
-                            if (rc.scope === "country") {
-                              return (
-                                <span className="text-muted-foreground/60 italic">
-                                  complete record
-                                </span>
-                              );
-                            }
-                            // "complete" — no location, no date
-                            return (
+                          {rc &&
+                            (rc.scope === "filtered" ? (
+                              <span className="text-accent/70 font-medium">
+                                {rc.count.toLocaleString()} records
+                              </span>
+                            ) : (
                               <span className="text-muted-foreground/60 italic">
                                 complete record
                               </span>
-                            );
-                          })()}
+                            ))}
                         </div>
                         {(dateFrom || dateUntil) && (
                           <div className="flex items-center gap-1 text-muted-foreground">
@@ -958,7 +1033,6 @@ export function MapSidebar({
                         )}
                       </div>
 
-                      {/* Actions — View / Request / Download only */}
                       <div className="flex gap-1 flex-wrap">
                         <Button
                           size="sm"
@@ -972,7 +1046,6 @@ export function MapSidebar({
                           />
                           {isActive ? "Hide" : "View"}
                         </Button>
-
                         <Button
                           size="sm"
                           variant="ghost"
@@ -989,7 +1062,6 @@ export function MapSidebar({
                         >
                           <FileText className="h-3 w-3 mr-1" /> Request
                         </Button>
-
                         <Button
                           size="sm"
                           variant="ghost"

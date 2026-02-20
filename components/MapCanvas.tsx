@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Button } from "./ui/button";
 import { MapSidebar } from "./MapSidebar";
-import { ChartPanel } from "./ChartPanel";
+import { ChartPanel, DatasetSelection } from "./ChartPanel";
 import {
   ZoomIn,
   ZoomOut,
@@ -24,31 +24,125 @@ type BaseLayer = "map" | "satellite";
 type SelectionMode = null | "rectangle" | "click";
 export type BoundaryMode = "GADM" | "TAMSAT" | "SHAMBA";
 
-// Which boundary mode each dataset_type uses
+// ---------------------------------------------------------------------------
+// BOUNDARY_MODE_FOR_DATASET
+//
+// Maps dataset id → which boundary polygon type it uses on the map.
+// Update this whenever you add new dataset ids to the `datasets` table.
+//
+// Pattern:  <subcategory>_<boundary>_<sensor>_<mask>
+//   *_ward_*   → GADM   (ward-level admin polygons)
+//   *_grid_*   → TAMSAT (4km grid cells)
+//   *_farm_*   → SHAMBA (farm polygons)
+//
+// Your existing data (renamed to new ids):
+//   old "ndvi_ward"  → was MODIS, cropland mask → new id: ndvi_ward_modis_crop
+//   old "ndvi_grid"  → was MODIS, cropland mask → new id: ndvi_grid_modis_crop
+//   old "ndvi_farm"  → was Sentinel-2, no mask   → new id: ndvi_farm_s2_none
+//
+// If you still have rows in timeseries_data under the OLD ids, you can either:
+//   1. UPDATE timeseries_data SET dataset_type = 'ndvi_ward_modis_crop'
+//      WHERE dataset_type = 'ndvi_ward';                    ← recommended
+//   2. Or keep the old ids as aliases by adding them below while you migrate.
+// ---------------------------------------------------------------------------
 const BOUNDARY_MODE_FOR_DATASET: Record<string, BoundaryMode> = {
+  // ── GADM (ward-level) ────────────────────────────────────────────────────
+  // NDVI
+  ndvi_ward_s2_none: "GADM",
+  ndvi_ward_s2_crop: "GADM",
+  ndvi_ward_s2_forage: "GADM",
+  ndvi_ward_modis_none: "GADM",
+  ndvi_ward_modis_crop: "GADM", // ← your old "ndvi_ward" data lives here
+  ndvi_ward_modis_forage: "GADM",
+  ndvi_ward_viirs_none: "GADM",
+  ndvi_ward_viirs_crop: "GADM",
+  ndvi_ward_viirs_forage: "GADM",
+  // LAI
+  lai_ward_modis_none: "GADM",
+  lai_ward_modis_crop: "GADM",
+  lai_ward_modis_forage: "GADM",
+  // BAI
+  bai_ward_modis_none: "GADM",
+  bai_ward_modis_crop: "GADM",
+  bai_ward_modis_forage: "GADM",
+  // Climate / LST / Wind
+  lst_ward_modis_none: "GADM",
+  wind_speed_ward: "GADM",
+  wind_gust_ward: "GADM",
+  // Rainfall
+  rainfall_ward_chirps: "GADM",
+  rainfall_ward_imerg: "GADM",
+  // Hydrology / Land
+  soil_moisture_ward: "GADM",
+  et_ward: "GADM",
+  land_cover_esa: "GADM",
+  soil_map: "GADM",
+
+  // ── TAMSAT (grid-level) ──────────────────────────────────────────────────
+  ndvi_grid_s2_none: "TAMSAT",
+  ndvi_grid_s2_crop: "TAMSAT",
+  ndvi_grid_s2_forage: "TAMSAT",
+  ndvi_grid_modis_none: "TAMSAT",
+  ndvi_grid_modis_crop: "TAMSAT", // ← your old "ndvi_grid" data lives here
+  ndvi_grid_viirs_none: "TAMSAT",
+  lai_grid_modis_none: "TAMSAT",
+  lai_grid_modis_crop: "TAMSAT",
+  bai_grid_modis_none: "TAMSAT",
+  rainfall_grid_chirps: "TAMSAT",
+  rainfall_grid_imerg: "TAMSAT",
+  lst_grid_modis_none: "TAMSAT",
+
+  // ── SHAMBA (farm-level) ──────────────────────────────────────────────────
+  ndvi_farm_s2_none: "SHAMBA", // ← your old "ndvi_farm" data lives here
+  ndvi_farm_s2_crop: "SHAMBA",
+  ndvi_farm_s2_forage: "SHAMBA",
+  ndvi_farm_modis_none: "SHAMBA",
+  lai_farm_modis_none: "SHAMBA",
+  lai_farm_modis_crop: "SHAMBA",
+  bai_farm_modis_none: "SHAMBA",
+
+  // ── Legacy ids — keep during migration, remove once timeseries_data updated ──
   ndvi_ward: "GADM",
-  rainfall_chirps: "GADM",
   ndvi_grid: "TAMSAT",
   ndvi_farm: "SHAMBA",
+  rainfall_chirps: "GADM",
 };
+
+// Fallback dataset id to show on polygon click when nothing is checked
+const FALLBACK_ID: Record<BoundaryMode, string> = {
+  GADM: "ndvi_ward_modis_crop",
+  TAMSAT: "ndvi_grid_modis_crop",
+  SHAMBA: "ndvi_farm_s2_none",
+};
+// Keep legacy fallbacks so the chart still opens before you migrate data
+const FALLBACK_ID_LEGACY: Record<BoundaryMode, string> = {
+  GADM: "ndvi_ward",
+  TAMSAT: "ndvi_grid",
+  SHAMBA: "ndvi_farm",
+};
+
+// ---------------------------------------------------------------------------
 
 interface BoundaryLevelOption {
   id: string;
   name: string;
 }
 
+// Updated to include mask + frequency from the new datasets schema
 interface DatasetItem {
   id: string;
   name: string;
   category: string;
   subcategory: string;
   sensor: string | null;
+  mask: string; // 'none' | 'cropland' | 'forage'
+  frequency: string | null;
   type: string;
-  boundary_type: string;
+  boundary_type: string; // 'GADM' | 'TAMSAT' | 'SHAMBA'
 }
 
 interface ResultItem {
-  id: string; // dataset_type key e.g. "ndvi_ward"
+  id: string;
   name: string;
   type: string;
   category: string;
@@ -63,12 +157,11 @@ export function MapCanvas() {
   const mapInstanceRef = useRef<L.Map | null>(null);
   const currentTileLayerRef = useRef<L.TileLayer | null>(null);
   const geojsonLayerRef = useRef<L.GeoJSON | null>(null);
-  const highlightedLayerRef = useRef<L.Path | null>(null); // tracks the currently selected feature
+  const highlightedLayerRef = useRef<L.Path | null>(null);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [mode, setMode] = useState<SidebarMode>("search");
 
-  // Map tool toggles
   const [isLayerToolExpanded, setIsLayerToolExpanded] = useState(false);
   const [isBoundaryToolExpanded, setIsBoundaryToolExpanded] = useState(false);
   const [baseLayer, setBaseLayer] = useState<BaseLayer>("satellite");
@@ -77,21 +170,17 @@ export function MapCanvas() {
   const { user } = useAuth();
   const userRole = (user?.role ?? "public") as UserRole;
 
-  // ---------- Boundary selections (GADM cascade) ----------
+  // ── Boundary selections ──────────────────────────────────────────────────
   const [country, setCountry] = useState<string | null>(null);
   const [admin1, setAdmin1] = useState<string | null>(null);
   const [admin2, setAdmin2] = useState<string | null>(null);
   const [admin3, setAdmin3] = useState<string | null>(null);
 
-  // Lifted from MapSidebar so MapCanvas reacts to it
   const [boundaryMode, setBoundaryMode] = useState<BoundaryMode>("GADM");
 
-  // Date range lifted from MapSidebar so ChartPanel can consume it
-  // Intentionally undefined by default — no date filter means "complete record"
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
   const [dateUntil, setDateUntil] = useState<Date | undefined>(undefined);
 
-  // Dropdown options
   const [countries] = useState<BoundaryLevelOption[]>([
     { id: "KEN", name: "Kenya" },
     { id: "TZA", name: "Tanzania" },
@@ -101,18 +190,15 @@ export function MapCanvas() {
   const [admin2Options, setAdmin2Options] = useState<BoundaryLevelOption[]>([]);
   const [admin3Options, setAdmin3Options] = useState<BoundaryLevelOption[]>([]);
 
-  // All datasets from DB (drives sidebar tree)
+  // Dataset tree state
   const [allDatasets, setAllDatasets] = useState<DatasetItem[]>([]);
-  // IDs the user has checked in the tree (drives polygon-click chart default)
   const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[]>([]);
 
-  // Results + RBAC
+  // Results
   const [isSearching, setIsSearching] = useState(false);
   const [results, setResults] = useState<ResultItem[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [activeLayerIds, setActiveLayerIds] = useState<string[]>([]);
-  // Record counts per dataset_type, fetched on Search
-  // scope: "complete" | "country" | "filtered" drives result card display
   const [recordCounts, setRecordCounts] = useState<
     Record<
       string,
@@ -124,15 +210,73 @@ export function MapCanvas() {
     >
   >({});
 
-  // Chart state
-  const [activeChartId, setActiveChartId] = useState<string | null>(null);
-  const [activeChartName, setActiveChartName] = useState<string>("");
+  // ── Chart state ──────────────────────────────────────────────────────────
+  // Instead of a single activeChartId we store the full selections array
+  // so ChartPanel can render one line per selected dataset.
+  const [chartSelections, setChartSelections] = useState<DatasetSelection[]>(
+    [],
+  );
   const [activeChartLocationId, setActiveChartLocationId] =
     useState<string>("");
 
   const [searchTerm, setSearchTerm] = useState<string>("");
 
-  // ---------- Map init ----------
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  /** Convert checked dataset ids + allDatasets into DatasetSelection[] for ChartPanel */
+  function buildSelections(
+    checkedIds: string[],
+    datasets: DatasetItem[],
+    forMode: BoundaryMode,
+  ): DatasetSelection[] {
+    // Only include datasets that match the current boundary mode
+    return checkedIds
+      .map((id) => datasets.find((d) => d.id === id))
+      .filter((d): d is DatasetItem => !!d && d.boundary_type === forMode)
+      .map((d) => ({
+        datasetId: d.id,
+        datasetName: d.name,
+        mask: d.mask ?? "none",
+        sensor: d.sensor ?? null,
+        frequency: d.frequency ?? null,
+      }));
+  }
+
+  /** Build fallback selections when nothing relevant is checked */
+  function buildFallbackSelections(
+    forMode: BoundaryMode,
+    datasets: DatasetItem[],
+  ): DatasetSelection[] {
+    // Try new-style id first, then legacy
+    const preferredId = FALLBACK_ID[forMode];
+    const legacyId = FALLBACK_ID_LEGACY[forMode];
+    const ds =
+      datasets.find((d) => d.id === preferredId) ??
+      datasets.find((d) => d.id === legacyId);
+    if (!ds) {
+      // Absolute last resort — just name the id, ChartPanel will show "no data" if absent
+      return [
+        {
+          datasetId: preferredId,
+          datasetName: preferredId,
+          mask: "none",
+          sensor: null,
+          frequency: null,
+        },
+      ];
+    }
+    return [
+      {
+        datasetId: ds.id,
+        datasetName: ds.name,
+        mask: ds.mask ?? "none",
+        sensor: ds.sensor ?? null,
+        frequency: ds.frequency ?? null,
+      },
+    ];
+  }
+
+  // ── Map init ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
 
@@ -165,26 +309,31 @@ export function MapCanvas() {
     }
   }, [isSidebarOpen]);
 
-  // Auto-load datasets on mount — no Search button needed
+  // Auto-load datasets on mount — includes mask + frequency columns
   useEffect(() => {
     fetch("/api/datasets")
       .then((r) => r.json())
       .then(({ datasets }) => {
-        const rows: DatasetItem[] = datasets ?? [];
+        const rows: DatasetItem[] = (datasets ?? []).map((d: any) => ({
+          ...d,
+          mask: d.mask ?? "none",
+          frequency: d.frequency ?? null,
+        }));
         setAllDatasets(rows);
-        // Default selection: ndvi_ward
+        // Default selection: prefer new id, fall back to legacy
         setSelectedDatasetIds((prev) => {
           if (prev.length > 0) return prev;
-          const def = rows.find((d) => d.id === "ndvi_ward");
-          return def ? [def.id] : rows.length > 0 ? [rows[0].id] : [];
+          const pref =
+            rows.find((d) => d.id === "ndvi_ward_modis_crop") ??
+            rows.find((d) => d.id === "ndvi_ward");
+          return pref ? [pref.id] : rows.length > 0 ? [rows[0].id] : [];
         });
-        // results tab is populated only when Search is clicked
       })
       .catch((e) => console.error("Dataset auto-load error:", e));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---------- Base layer ----------
+  // ── Base layer ────────────────────────────────────────────────────────────
   function handleBaseLayerChange(layer: BaseLayer) {
     if (!mapInstanceRef.current || !currentTileLayerRef.current) return;
     const map = mapInstanceRef.current;
@@ -207,7 +356,7 @@ export function MapCanvas() {
     setSelectionMode(newMode);
   }
 
-  // ---------- Layer helpers ----------
+  // ── Layer helpers ─────────────────────────────────────────────────────────
   function clearBoundaryLayers() {
     if (geojsonLayerRef.current && mapInstanceRef.current) {
       mapInstanceRef.current.removeLayer(geojsonLayerRef.current);
@@ -215,9 +364,9 @@ export function MapCanvas() {
     }
   }
 
-  /** Open chart for a clicked feature.
-   *  Picks the first *checked* dataset matching this boundary mode.
-   *  Falls back to the sensible default per mode if nothing is checked.
+  /**
+   * On polygon click: open the chart for all checked datasets that match
+   * the current boundary mode. If nothing checked, fall back to a sensible default.
    */
   function openChartForFeature(
     featureProps: Record<string, string>,
@@ -227,27 +376,11 @@ export function MapCanvas() {
   ) {
     const locationId = featureProps.location_id ?? featureProps.id ?? "";
 
-    // Find first checked dataset that matches this boundary mode
-    const match = currentDatasets.find(
-      (d) => checkedIds.includes(d.id) && d.boundary_type === mode,
-    );
+    const sels = buildSelections(checkedIds, currentDatasets, mode);
+    const finalSels =
+      sels.length > 0 ? sels : buildFallbackSelections(mode, currentDatasets);
 
-    // Fallback defaults per mode (guaranteed to have data)
-    const fallbackId =
-      mode === "TAMSAT"
-        ? "ndvi_grid"
-        : mode === "SHAMBA"
-          ? "ndvi_farm"
-          : "ndvi_ward";
-    const fallbackName =
-      mode === "TAMSAT"
-        ? "NDVI - TAMSAT Grid"
-        : mode === "SHAMBA"
-          ? "NDVI - Farm Level"
-          : "NDVI - Ward Level";
-
-    setActiveChartId(match?.id ?? fallbackId);
-    setActiveChartName(match?.name ?? fallbackName);
+    setChartSelections(finalSels);
     setActiveChartLocationId(locationId);
   }
 
@@ -266,44 +399,34 @@ export function MapCanvas() {
       onEachFeature: (feature, featureLayer) => {
         const props = (feature.properties ?? {}) as Record<string, string>;
 
-        // Show feature name on hover; falls back to id if name is absent
         featureLayer.bindTooltip(props.name ?? props.id ?? "", {
           permanent: false,
           direction: "top",
         });
 
         featureLayer.on("click", () => {
-          // Reset whichever feature was previously selected before highlighting the new one
           if (highlightedLayerRef.current) {
             layer.resetStyle(highlightedLayerRef.current);
           }
-
-          // Amber highlight signals the active selection to the user
           (featureLayer as L.Path).setStyle({
             fillOpacity: 0.2,
             weight: 3,
             color: "#F59E0B",
           });
-
-          // Bring to front so the amber border isn't clipped by neighbouring polygons
           (featureLayer as L.Path).bringToFront();
-
-          // Persist reference so it can be reset on the next click
           highlightedLayerRef.current = featureLayer as L.Path;
 
           openChartForFeature(props, mode, currentDatasets, checkedIds);
         });
-
-        // Highlight persists after mouseout — it clears only when another feature is clicked
       },
     }).addTo(mapInstanceRef.current!);
 
     geojsonLayerRef.current = layer;
     mapInstanceRef.current!.fitBounds(layer.getBounds());
   }
-  // ---------- Core boundary loaders ----------
 
-  /** GADM: load polygons one level deeper than current selection */
+  // ── Core boundary loaders ─────────────────────────────────────────────────
+
   async function loadGadmLayer(
     countryVal: string,
     a1: string | null,
@@ -315,20 +438,15 @@ export function MapCanvas() {
     const params: Record<string, string> = { country: countryVal };
     if (a1) params.admin1 = a1;
     if (a2) params.admin2 = a2;
-    const qs = new URLSearchParams(params).toString();
-
     try {
-      const res = await fetch(`/api/boundaries/geojson?${qs}`);
+      const res = await fetch(
+        `/api/boundaries/geojson?${new URLSearchParams(params)}`,
+      );
       if (!res.ok) throw new Error(res.statusText);
       const geojson: GeoJSON.FeatureCollection = await res.json();
       renderGeoJSON(
         geojson,
-        {
-          color: "#05487f",
-          weight: 2,
-          fillColor: "#05487f",
-          fillOpacity: 0.1,
-        },
+        { color: "#05487f", weight: 2, fillColor: "#05487f", fillOpacity: 0.1 },
         "GADM",
         datasets,
         checkedIds,
@@ -352,10 +470,10 @@ export function MapCanvas() {
     };
     if (a1) params.admin1 = a1;
     if (a2) params.admin2 = a2;
-    const qs = new URLSearchParams(params).toString();
-
     try {
-      const res = await fetch(`/api/boundaries/geojson?${qs}`);
+      const res = await fetch(
+        `/api/boundaries/geojson?${new URLSearchParams(params)}`,
+      );
       if (!res.ok) throw new Error(res.statusText);
       const geojson: GeoJSON.FeatureCollection = await res.json();
       renderGeoJSON(
@@ -386,10 +504,10 @@ export function MapCanvas() {
     if (a1) params.admin1 = a1;
     if (a2) params.admin2 = a2;
     if (a3) params.admin3 = a3;
-    const qs = new URLSearchParams(params).toString();
-
     try {
-      const res = await fetch(`/api/boundaries/geojson?${qs}`);
+      const res = await fetch(
+        `/api/boundaries/geojson?${new URLSearchParams(params)}`,
+      );
       if (!res.ok) throw new Error(res.statusText);
       const geojson: GeoJSON.FeatureCollection = await res.json();
       renderGeoJSON(
@@ -409,7 +527,6 @@ export function MapCanvas() {
     }
   }
 
-  /** Single entry-point — called whenever selection or mode changes */
   async function refreshMap(
     bMode: BoundaryMode,
     c: string | null,
@@ -434,7 +551,8 @@ export function MapCanvas() {
     await loadGadmLayer(c, a1, a2, datasets, checkedIds);
   }
 
-  // ---------- Boundary dropdown handlers ----------
+  // ── Boundary dropdown handlers ────────────────────────────────────────────
+
   async function handleCountryChange(id: string) {
     const value = id || null;
     setCountry(value);
@@ -444,12 +562,10 @@ export function MapCanvas() {
     setAdmin1Options([]);
     setAdmin2Options([]);
     setAdmin3Options([]);
-
     if (!value) {
       clearBoundaryLayers();
       return;
     }
-
     try {
       const res = await fetch(
         `/api/boundaries?mode=GADM&level=admin1&country=${value}`,
@@ -459,7 +575,6 @@ export function MapCanvas() {
     } catch (e) {
       console.error(e);
     }
-
     await refreshMap(
       boundaryMode,
       value,
@@ -478,7 +593,6 @@ export function MapCanvas() {
     setAdmin3(null);
     setAdmin2Options([]);
     setAdmin3Options([]);
-
     if (!value) {
       await refreshMap(
         boundaryMode,
@@ -491,7 +605,6 @@ export function MapCanvas() {
       );
       return;
     }
-
     try {
       const res = await fetch(
         `/api/boundaries?mode=GADM&level=admin2&country=${country}&admin1=${value}`,
@@ -501,7 +614,6 @@ export function MapCanvas() {
     } catch (e) {
       console.error(e);
     }
-
     await refreshMap(
       boundaryMode,
       country,
@@ -518,7 +630,6 @@ export function MapCanvas() {
     setAdmin2(value);
     setAdmin3(null);
     setAdmin3Options([]);
-
     if (!value) {
       await refreshMap(
         boundaryMode,
@@ -531,7 +642,6 @@ export function MapCanvas() {
       );
       return;
     }
-
     try {
       const res = await fetch(
         `/api/boundaries?mode=GADM&level=admin3&country=${country}&admin1=${admin1}&admin2=${value}`,
@@ -541,7 +651,6 @@ export function MapCanvas() {
     } catch (e) {
       console.error(e);
     }
-
     await refreshMap(
       boundaryMode,
       country,
@@ -569,6 +678,9 @@ export function MapCanvas() {
 
   async function handleBoundaryModeChange(newMode: BoundaryMode) {
     setBoundaryMode(newMode);
+    // Close any open chart since the location_id format differs per mode
+    setChartSelections([]);
+    setActiveChartLocationId("");
     await refreshMap(
       newMode,
       country,
@@ -580,11 +692,11 @@ export function MapCanvas() {
     );
   }
 
-  // Search: filter by checked datasets, fetch record counts, 2s spinner → Results tab
+  // ── Search ────────────────────────────────────────────────────────────────
   async function handleSearch() {
     setIsSearching(true);
 
-    const source = allDatasets.map((d) => ({
+    const source: ResultItem[] = allDatasets.map((d) => ({
       id: d.id,
       name: d.name,
       type: d.type === "raster" ? "Raster" : "Tabular",
@@ -595,7 +707,6 @@ export function MapCanvas() {
       size: "–",
     }));
 
-    // Only show datasets the user checked — if nothing checked, show all
     const filtered =
       selectedDatasetIds.length > 0
         ? source.filter((r) => selectedDatasetIds.includes(r.id))
@@ -605,7 +716,6 @@ export function MapCanvas() {
     setTotalCount(filtered.length);
     setActiveLayerIds([]);
 
-    // Shared location + date params (same for every dataset)
     const hasSubRegion = !!(admin1 || admin2 || admin3);
     const hasDateFilter = !!(dateFrom || dateUntil);
     const searchScope: "complete" | "country" | "filtered" =
@@ -623,14 +733,12 @@ export function MapCanvas() {
     if (dateFrom) baseParams.set("start", dateFrom.toISOString().split("T")[0]);
     if (dateUntil) baseParams.set("end", dateUntil.toISOString().split("T")[0]);
 
-    // Fetch record counts per dataset — pass boundary_type so the API uses
-    // the correct JOIN (GADM name-concat, TAMSAT grid_id, SHAMBA farm_id)
     const countResults = await Promise.all(
       filtered.map(async (r) => {
         try {
           const p = new URLSearchParams(baseParams);
           p.set("dataset_type", r.id);
-          p.set("boundary_type", r.boundaryType); // "GADM" | "TAMSAT" | "SHAMBA"
+          p.set("boundary_type", r.boundaryType);
           const res = await fetch(`/api/data/count?${p.toString()}`);
           const data = await res.json();
           return [
@@ -650,7 +758,6 @@ export function MapCanvas() {
       }),
     );
     setRecordCounts(Object.fromEntries(countResults));
-
     setIsSearching(false);
     setMode("results");
   }
@@ -678,18 +785,16 @@ export function MapCanvas() {
   }
 
   function handleCloseChart() {
-    setActiveChartId(null);
-    setActiveChartName("");
+    setChartSelections([]);
     setActiveChartLocationId("");
   }
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="flex h-[80vh] overflow-hidden">
       {/* Sidebar */}
       <div
-        className={`transition-all duration-300 shrink-0 ${
-          isSidebarOpen ? "w-80" : "w-0"
-        } overflow-hidden`}
+        className={`transition-all duration-300 shrink-0 ${isSidebarOpen ? "w-80" : "w-0"} overflow-hidden`}
       >
         <MapSidebar
           userRole={userRole}
@@ -760,11 +865,7 @@ export function MapCanvas() {
                   size="sm"
                   variant={baseLayer === "map" ? "default" : "ghost"}
                   onClick={() => handleBaseLayerChange("map")}
-                  className={`h-8 px-3 text-xs bg-primary/10 ${
-                    baseLayer === "map"
-                      ? "bg-primary text-accent"
-                      : "hover:bg-accent/80"
-                  }`}
+                  className={`h-8 px-3 text-xs bg-primary/10 ${baseLayer === "map" ? "bg-primary text-accent" : "hover:bg-accent/80"}`}
                 >
                   Map
                 </Button>
@@ -772,25 +873,17 @@ export function MapCanvas() {
                   size="sm"
                   variant={baseLayer === "satellite" ? "default" : "ghost"}
                   onClick={() => handleBaseLayerChange("satellite")}
-                  className={`h-8 px-3 text-xs bg-primary/10 ${
-                    baseLayer === "satellite"
-                      ? "bg-primary text-accent"
-                      : "hover:bg-accent/80"
-                  }`}
+                  className={`h-8 px-3 text-xs bg-primary/10 ${baseLayer === "satellite" ? "bg-primary text-accent" : "hover:bg-accent/80"}`}
                 >
                   Satellite
                 </Button>
               </>
-            )}{" "}
+            )}
             <Button
               size="icon"
               variant="ghost"
               onClick={() => setIsLayerToolExpanded(!isLayerToolExpanded)}
-              className={`h-8 w-8 ${
-                isLayerToolExpanded
-                  ? "bg-accent text-accent-foreground"
-                  : "hover:bg-accent/80"
-              }`}
+              className={`h-8 w-8 ${isLayerToolExpanded ? "bg-accent text-accent-foreground" : "hover:bg-accent/80"}`}
             >
               <Layers className="h-3 w-3" />
             </Button>
@@ -809,11 +902,7 @@ export function MapCanvas() {
                       selectionMode === "rectangle" ? null : "rectangle",
                     )
                   }
-                  className={`h-8 w-8 bg-primary/10 ${
-                    selectionMode === "rectangle"
-                      ? "bg-primary text-accent"
-                      : "hover:bg-accent/80"
-                  }`}
+                  className={`h-8 w-8 bg-primary/10 ${selectionMode === "rectangle" ? "bg-primary text-accent" : "hover:bg-accent/80"}`}
                   title="Draw to select polygons"
                 >
                   <Square className="h-3 w-3" />
@@ -826,11 +915,7 @@ export function MapCanvas() {
                       selectionMode === "click" ? null : "click",
                     )
                   }
-                  className={`h-8 w-8 bg-primary/10 ${
-                    selectionMode === "click"
-                      ? "bg-primary text-accent"
-                      : "hover:bg-accent/80"
-                  }`}
+                  className={`h-8 w-8 bg-primary/10 ${selectionMode === "click" ? "bg-primary text-accent" : "hover:bg-accent/80"}`}
                   title="Click to select polygons"
                 >
                   <Pencil className="h-3 w-3" />
@@ -844,11 +929,7 @@ export function MapCanvas() {
                 setIsBoundaryToolExpanded(!isBoundaryToolExpanded);
                 if (isBoundaryToolExpanded) handleSelectionModeChange(null);
               }}
-              className={`h-8 w-8 ${
-                isBoundaryToolExpanded
-                  ? "bg-accent text-accent-foreground"
-                  : "hover:bg-accent/80"
-              }`}
+              className={`h-8 w-8 ${isBoundaryToolExpanded ? "bg-accent text-accent-foreground" : "hover:bg-accent/80"}`}
             >
               <Pentagon className="h-3 w-3" />
             </Button>
@@ -895,11 +976,10 @@ export function MapCanvas() {
           </Button>
         </div>
 
-        {/* Chart Panel */}
-        {activeChartId && (
+        {/* Chart Panel — only renders when a polygon has been clicked */}
+        {chartSelections.length > 0 && activeChartLocationId && (
           <ChartPanel
-            datasetId={activeChartId}
-            datasetName={activeChartName}
+            selections={chartSelections}
             locationId={activeChartLocationId}
             startDate={dateFrom?.toISOString().split("T")[0]}
             endDate={dateUntil?.toISOString().split("T")[0]}

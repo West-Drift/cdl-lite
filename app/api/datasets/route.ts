@@ -6,20 +6,23 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /**
  * GET /api/datasets
- * Optional params: category, subcategory, boundary_type
+ * Optional params: category, subcategory, boundary_type, mask, sensor, frequency
  *
  * Returns: { datasets: DatasetRow[], count }
- * Each row: { id, name, category, subcategory, sensor, type, boundary_type }
+ * Each row: { id, name, category, subcategory, sensor, mask, frequency, type, boundary_type }
  */
 export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams;
   const category = sp.get("category");
   const subcategory = sp.get("subcategory");
   const boundaryType = sp.get("boundary_type");
+  const mask = sp.get("mask");
+  const sensor = sp.get("sensor");
+  const frequency = sp.get("frequency");
 
   try {
     let query =
-      "SELECT id, name, category, subcategory, sensor, type, boundary_type FROM datasets WHERE 1=1";
+      "SELECT id, name, category, subcategory, sensor, mask, frequency, type, boundary_type FROM datasets WHERE 1=1";
     const values: string[] = [];
 
     if (category) {
@@ -34,8 +37,20 @@ export async function GET(request: NextRequest) {
       values.push(boundaryType);
       query += ` AND boundary_type = $${values.length}`;
     }
+    if (mask) {
+      values.push(mask);
+      query += ` AND mask = $${values.length}`;
+    }
+    if (sensor) {
+      values.push(sensor);
+      query += ` AND sensor = $${values.length}`;
+    }
+    if (frequency) {
+      values.push(frequency);
+      query += ` AND frequency = $${values.length}`;
+    }
 
-    query += " ORDER BY category, subcategory, name";
+    query += " ORDER BY category, subcategory, boundary_type, mask, name";
 
     const { rows } = await pool.query(query, values);
     return NextResponse.json({ datasets: rows, count: rows.length });
